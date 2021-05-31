@@ -408,8 +408,8 @@ int odroid_overlay_dialog(const char *header, odroid_dialog_choice_t *options, i
 int odroid_overlay_confirm(const char *text, bool yes_selected)
 {
     odroid_dialog_choice_t choices[] = {
-        {1, "Yes", "", 1, NULL},
-        {0, "No ", "", 1, NULL},
+        {1, "Oui", "", 1, NULL},
+        {0, "Non", "", 1, NULL},
         ODROID_DIALOG_CHOICE_LAST
     };
     return odroid_overlay_dialog(text, choices, yes_selected ? 0 : 1);
@@ -525,7 +525,7 @@ int odroid_overlay_settings_menu(odroid_dialog_choice_t *extra_options)
     static char volume_value[8];
 
     odroid_dialog_choice_t options[32] = {
-        {0, "Brightness", bright_value, 1, &brightness_update_cb},
+        {0, "Luminosite", bright_value, 1, &brightness_update_cb},
         {1, "Volume    ", volume_value, 1, &volume_update_cb},
         ODROID_DIALOG_CHOICE_LAST
     };
@@ -549,16 +549,16 @@ static void draw_game_status_bar(runtime_stats_t stats)
     int pad_text = (height - odroid_overlay_get_font_size()) / 2;
     char bottom[40], header[40];
 
-    const char *romPath = odroid_system_get_app()->romPath;
+    //const char *romPath = odroid_system_get_app()->romPath;
 
-    snprintf(header, 40, "FPS: %.0f (%.0f) / BUSY: %.0f%%",
-        round(stats.totalFPS), round(stats.skippedFPS), round(stats.busyPercent));
-    snprintf(bottom, 40, "%s", romPath ? (romPath + strlen(ODROID_BASE_PATH_ROMS)) : "N/A");
+    //snprintf(header, 40, "       ",
+    //round(stats.totalFPS), round(stats.skippedFPS), round(stats.busyPercent));
+    //snprintf(bottom, 40, "%s", romPath ? (romPath + strlen(ODROID_BASE_PATH_ROMS)) : "  ");
 
     odroid_overlay_draw_fill_rect(0, 0, width, height, C_GW_RED);
     odroid_overlay_draw_fill_rect(0, ODROID_SCREEN_HEIGHT - height, width, height, C_GW_RED);
-    odroid_overlay_draw_text(0, pad_text, width, header, C_GW_YELLOW, C_GW_RED);
-    odroid_overlay_draw_text(0, ODROID_SCREEN_HEIGHT - height + pad_text, width, bottom, C_GW_YELLOW, C_GW_RED);
+    //odroid_overlay_draw_text(0, pad_text, width, header, C_GW_YELLOW, C_GW_RED);
+    //odroid_overlay_draw_text(0, ODROID_SCREEN_HEIGHT - height + pad_text, width, bottom, C_GW_YELLOW, C_GW_RED);
     odroid_overlay_draw_battery(width - 26, 3);
 }
 
@@ -567,9 +567,9 @@ int odroid_overlay_game_settings_menu(odroid_dialog_choice_t *extra_options)
     char speedup_value[8];
 
     odroid_dialog_choice_t options[32] = {
-        {200, "Scaling", "Full", 1, &scaling_update_cb},
-        {210, "Filtering", "None", 1, &filter_update_cb}, // Interpolation
-        {220, "Speed", speedup_value, 1, &speedup_update_cb},
+        //{200, "Echelle", "Pleine", 1, &scaling_update_cb},
+        //{210, "Filtre", "Aucun", 1, &filter_update_cb}, // Interpolation
+        {220, "Vitesse", speedup_value, 1, &speedup_update_cb},
 
         ODROID_DIALOG_CHOICE_LAST
     };
@@ -615,14 +615,14 @@ int odroid_overlay_game_debug_menu(void)
 int odroid_overlay_game_menu(odroid_dialog_choice_t *extra_options)
 {
     odroid_dialog_choice_t choices[] = {
-        // {0, "Continue", "",  1, NULL},
-        {10, "Save & Continue", "",  1, NULL},
-        {20, "Save & Quit", "", 1, NULL},
-        {30, "Reload", "", 1, NULL},
+        {0, "Reprendre", "",  1, NULL},
+        {10, "Sauver & Reprendre", "",  1, NULL},
+        {20, "Sauver & Quitter", "", 1, NULL},
+        {30, "Relancer", "", 1, NULL},
         {40, "Options", "", 1, NULL},
-        // {50, "Tools", "", 1, NULL},
-        {90, "Power off", "", 1, NULL},
-        {100, "Quit to menu", "", 1, NULL},
+       // {50, "Tools", "", 1, NULL},
+        {90, "Eteindre", "", 1, NULL},
+        {100, "Quitter vers menu", "", 1, NULL},
         ODROID_DIALOG_CHOICE_LAST
     };
 
