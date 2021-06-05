@@ -215,7 +215,7 @@ int IRAM_ATTR rom_loadbank(short bank)
 }
 
 //uint8_t sram[8192];
-uint8_t sram[8192 * 16] __attribute__((section (".ahb")));
+uint8_t sram[8192 * 16];
 
 static int gb_rom_load()
 {
