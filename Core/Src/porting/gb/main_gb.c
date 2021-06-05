@@ -50,6 +50,9 @@ static uint skipFrames = 0;
 static bool saveSRAM = false;
 static int  saveSRAM_Timer = 0;
 
+// 3 pages
+uint8_t state_save_buffer[192 * 1024];
+
 
 // --- MAIN
 
@@ -358,7 +361,9 @@ static bool SaveState(char *pathName)
 {
     printf("Saving state...\n");
 
-    gb_state_save(ACTIVE_FILE->save_address, ACTIVE_FILE->save_size);
+    memset(state_save_buffer, '\x00', sizeof(state_save_buffer));
+    size_t size = gb_state_save(state_save_buffer, sizeof(state_save_buffer));
+    store_save(ACTIVE_FILE->save_address, state_save_buffer, size);
 
     return 0;
 }
