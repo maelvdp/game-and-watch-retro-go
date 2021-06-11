@@ -45,6 +45,17 @@ static bool show_empty_cb(odroid_dialog_choice_t *option, odroid_dialog_event_t 
     return event == ODROID_DIALOG_ENTER;
 }
 
+static bool startup_app_cb(odroid_dialog_choice_t *option, odroid_dialog_event_t event)
+{
+    int startup_app = odroid_settings_StartupApp_get();
+    if (event == ODROID_DIALOG_PREV || event == ODROID_DIALOG_NEXT) {
+        startup_app = startup_app ? 0 : 1;
+        odroid_settings_StartupApp_set(startup_app);
+    }
+    strcpy(option->value, startup_app == 0 ? "Retro-Go" : "Dernier");
+    return event == ODROID_DIALOG_ENTER;
+}
+
 static bool show_cover_cb(odroid_dialog_choice_t *option, odroid_dialog_event_t event)
 {
     if (event == ODROID_DIALOG_PREV) {
@@ -80,16 +91,7 @@ static bool color_shift_cb(odroid_dialog_choice_t *option, odroid_dialog_event_t
 
 #endif
 
-static bool startup_app_cb(odroid_dialog_choice_t *option, odroid_dialog_event_t event)
-{
-    int startup_app = odroid_settings_StartupApp_get();
-    if (event == ODROID_DIALOG_PREV || event == ODROID_DIALOG_NEXT) {
-        startup_app = startup_app ? 0 : 1;
-        odroid_settings_StartupApp_set(startup_app);
-    }
-    strcpy(option->value, startup_app == 0 ? "Retro-Go" : "Dernier");
-    return event == ODROID_DIALOG_ENTER;
-}
+
 
 static inline bool tab_enabled(tab_t *tab)
 {
@@ -200,7 +202,7 @@ void retro_loop()
                     // {0, "Show cover", "Yes", 1, &show_cover_cb},
                     // {0, "Show empty", "Yes", 1, &show_empty_cb},
                     // {0, "---", "", -1, NULL},
-                    {0, "Demarrage", "Dernier", 1, &startup_app_cb},
+                    //{0, "Demarrage", "Dernier", 1, &startup_app_cb},
                     ODROID_DIALOG_CHOICE_LAST
                 };
                 odroid_overlay_settings_menu(choices);
