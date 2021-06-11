@@ -40,7 +40,7 @@ static void event_handler(gui_event_t event, tab_t *tab)
 
         if (emu->roms.count > 0)
         {
-            sprintf(tab->status, " Games: %d", emu->roms.count);
+            sprintf(tab->status, " Jeux: %d", emu->roms.count);
             gui_resize_list(tab, emu->roms.count);
 
             for (int i = 0; i < emu->roms.count; i++)
@@ -74,12 +74,12 @@ static void event_handler(gui_event_t event, tab_t *tab)
     {
         emulator_show_file_menu(file);
         gui_redraw();
-    }
+    }/*
     else if (event == KEY_PRESS_B)
     {
         emulator_show_file_info(file);
         gui_redraw();
-    }
+    }*/
     else if (event == TAB_IDLE)
     {
         if (file->checksum == 0)
@@ -333,14 +333,14 @@ void emulator_show_file_menu(retro_emulator_file_t *file)
 
     bool has_save = 1;
     bool has_sram = 0;
-    bool is_fav = 0;
+    //bool is_fav = 0;
 
     odroid_dialog_choice_t choices[] = {
-        {0, "Resume game ", "", has_save, NULL},
-        {1, "New game    ", "", 1, NULL},
-        {0, "------------", "", -1, NULL},
-        {3, is_fav ? "Del favorite" : "Add favorite", "", 1, NULL},
-        {2, "Delete save ", "", has_save || has_sram, NULL},
+        {0, "Reprendre          ", "", has_save, NULL},
+        {1, "Nouveau jeux       ", "", 1, NULL},
+        {0, "-------------------", "", -1, NULL},
+        //{3, is_fav ? "Retirer favoris    " : "Ajouter favoris    ", "", 1, NULL},
+        {2, "Supprimer savegarde", "", has_save || has_sram, NULL},
         ODROID_DIALOG_CHOICE_LAST
     };
     int sel = odroid_overlay_dialog(NULL, choices, has_save ? 0 : 1);
@@ -350,17 +350,17 @@ void emulator_show_file_menu(retro_emulator_file_t *file)
         emulator_start(file, sel == 0);
     }
     else if (sel == 2) {
-        if (odroid_overlay_confirm("Delete save file?", false) == 1) {
+        if (odroid_overlay_confirm("Supprimer sauvegarde?", false) == 1) {
             store_erase(file->save_address, file->save_size);
         }
-    }
+    }/*
     else if (sel == 3) {
-        // if (is_fav)
-        //     favorite_remove(file);
-        // else
-        //     favorite_add(file);
+         if (is_fav)
+             favorite_remove(file);
+         else
+             favorite_add(file);
     }
-
+    */
     // free(save_path);
     // free(sram_path);
 }
@@ -418,14 +418,16 @@ void emulators_init()
 #endif
 
 
+#ifdef ENABLE_EMULATOR_NES
+    add_emulator("Nintendo Entertainment System", "nes", "nes", "nofrendo-go", 16, logo_nes, header_nes);
+#endif
+
+
 #ifdef ENABLE_EMULATOR_GB
     add_emulator("Nintendo Gameboy", "gb", "gb", "gnuboy-go", 0, logo_gb, header_gb);
     // add_emulator("Nintendo Gameboy Color", "gbc", "gbc", "gnuboy-go", 0, logo_gbc, header_gbc);
 #endif
 
-#ifdef ENABLE_EMULATOR_NES
-    add_emulator("Nintendo Entertainment System", "nes", "nes", "nofrendo-go", 16, logo_nes, header_nes);
-#endif
     
 #ifdef ENABLE_EMULATOR_SMS
     add_emulator("Sega Master System", "sms", "sms", "smsplusgx-go", 0, logo_sms, header_sms);
