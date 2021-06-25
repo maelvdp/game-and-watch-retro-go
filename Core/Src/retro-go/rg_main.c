@@ -11,6 +11,15 @@
 #include "githash.h"
 #include "main.h"
 
+static const uint8_t *flash_manufacturer_str(uint8_t manufacturer)
+{
+    switch (manufacturer) {
+        case 0xC2: return "Macronix";
+        case 0x9D: return "ISSI";
+        default:   return "Unknown";
+    }
+}
+
 #if 0
 #define KEY_SELECTED_TAB  "SelectedTab"
 #define KEY_GUI_THEME     "ColorTheme"
@@ -180,6 +189,7 @@ void retro_loop()
                     {0, "", "kbeckmann", 1, NULL},
                     {0, "", "stacksmashing", 1, NULL},
                     {0, "", "", -1, NULL},
+                    {2, "Debug menu", "", 1, NULL},
                     {1, "Reset settings", "", 1, NULL},
                     {0, "Close", "", 1, NULL},
                     ODROID_DIALOG_CHOICE_LAST
@@ -187,11 +197,52 @@ void retro_loop()
 
                 int sel = odroid_overlay_dialog("Retro-Go", choices, -1);
                 if (sel == 1) {
+                    // Reset settings
                     if (odroid_overlay_confirm("Reset all settings? (TODO)", false) == 1) {
                         odroid_settings_reset();
                         odroid_system_switch_app(0); // reset
                     }
+                } else if (sel == 2) {
+                    // Debug menu
+                    uint8_t jedec_id[3];
+                    uint8_t jedec_id_str[16];
+
+                    uint8_t status;
+                    uint8_t status_str[8];
+
+                    // Read jedec id and status register from the external flash
+                    flash_read_jedec_id(&jedec_id[0]);
+                    flash_read_status_reg(&status);
+
+                    snprintf(jedec_id_str, sizeof(jedec_id_str), "%02X %02X %02X", jedec_id[0], jedec_id[1], jedec_id[2]);
+                    snprintf(status_str, sizeof(status_str), "0x%02X", status);
+
+                    odroid_dialog_choice_t debuginfo[] = {
+                        {0, "Flash JEDEC ID", jedec_id_str, 1, NULL},
+                        {0, "Flash manufacturer", flash_manufacturer_str(jedec_id[0]), 1, NULL},
+                        {0, "Flash status", status_str, 1, NULL},
+                        {0, "------------------", "", 1, NULL},
+                        {1, "Set Quad Enable", "", 1, NULL},
+                        {2, "Clear Quad Enable", "", 1, NULL},
+                        {0, "------------------", "", 1, NULL},
+                        {0, "Close", "", 1, NULL},
+                        ODROID_DIALOG_CHOICE_LAST
+                    };
+
+                    int sel = odroid_overlay_dialog("Debug", debuginfo, -1);
+                    if (sel == 1) {
+                        // Set Quad Enable
+                        if (odroid_overlay_confirm("Set Quad Enable?", false) == 1) {
+                            flash_set_quad_enable(1);
+                        }
+                    } else  if (sel == 2) {
+                        // Clear Quad Enable
+                        if (odroid_overlay_confirm("Clear Quad Enable?", false) == 1) {
+                            flash_set_quad_enable(0);
+                        }
+                    }
                 }
+
                 gui_redraw();
             }
             else if (last_key == ODROID_INPUT_VOLUME) {

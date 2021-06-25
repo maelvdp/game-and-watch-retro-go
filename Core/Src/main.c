@@ -210,6 +210,29 @@ int _write(int file, char *ptr, int len)
 }
 #endif
 
+static void flash_read(uint8_t cmd, uint8_t *buf, size_t len)
+{
+  OSPI_DisableMemoryMapped(&hospi1);
+  OSPI_ReadBytes(&hospi1, cmd, buf, len);
+  OSPI_EnableMemoryMappedMode(&hospi1);
+}
+
+void flash_read_jedec_id(uint8_t *data)
+{
+  flash_read(0x9F, data, 3);
+}
+
+void flash_read_status_reg(uint8_t *data)
+{
+  flash_read(0x05, data, 1);
+}
+
+void flash_set_quad_enable(uint8_t enable)
+{
+  OSPI_DisableMemoryMapped(&hospi1);
+  OSPI_SetQuadEnable(&hospi1, enable);
+  OSPI_EnableMemoryMappedMode(&hospi1);
+}
 
 void store_erase(const uint8_t *flash_ptr, size_t size)
 {
@@ -471,6 +494,10 @@ int main(void)
   OSPI_Init(&hospi1, quad_mode);
 
   OSPI_EnableMemoryMappedMode(&hospi1);
+
+  uint8_t jedec_id[3] = {0};
+  flash_read_jedec_id(jedec_id);
+  printf("Flash JEDEC ID: %02X %02X %02X\n", jedec_id[0], jedec_id[1], jedec_id[2]);
 
   // Copy instructions and data from extflash to axiram
   void *copy_areas[3];
