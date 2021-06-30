@@ -4,8 +4,11 @@ import argparse
 import os
 import subprocess
 import tempfile
+import platform
+import shutil
 
 from typing import List
+
 
 ROM_ENTRIES_TEMPLATE = """
 const retro_emulator_file_t {name}[] = {{
@@ -182,6 +185,14 @@ class ROMParser():
 
                     #GB/GBC LZ4 compression
                     if "gb_system" in variable_name:
+                        if platform.system() == "Darwin":
+                            split_exec = "gsplit"
+                            if not shutil.which(split_exec):
+                                print("Cannot find program \"gsplit\". Try:")
+                                print("    brew install coreutils")
+                                exit(-1)
+                        else:
+                            split_exec = "split"
 
                         # Create temp directory to build
                         tmp_dir_inst = tempfile.TemporaryDirectory(dir='./')
@@ -189,7 +200,7 @@ class ROMParser():
 
                          # split the ROM in banks
                         prefix =  tmp_dir+"/bank_"
-                        subprocess.run(["split", "-b16384","-d", r.path, prefix])
+                        subprocess.run([split_exec, "-b16384","-d", r.path, prefix])
 
                          # Get all banks ordered by name
                         tmp_files_list = sorted(os.listdir(tmp_dir))
@@ -305,6 +316,10 @@ class ROMParser():
             save_size = 60 * 1024
         elif folder == "gg":
             save_size = 60 * 1024
+        elif folder == "col":
+            save_size = 60 * 1024
+        elif folder == "sg":
+            save_size = 60 * 1024
         elif folder == "pce":
             save_size = 76 * 1024
         else:
@@ -373,6 +388,16 @@ class ROMParser():
         total_save_size += save_size
         total_rom_size += rom_size
         build_config += "#define ENABLE_EMULATOR_GG\n" if rom_size > 0 else ""
+
+        save_size, rom_size = self.generate_system("Core/Src/retro-go/col_roms.c", "Colecovision", "col_system", "col", ["col"], "SAVE_COL_")
+        total_save_size += save_size
+        total_rom_size += rom_size
+        build_config += "#define ENABLE_EMULATOR_COL\n" if rom_size > 0 else ""
+
+        save_size, rom_size = self.generate_system("Core/Src/retro-go/sg1000_roms.c", "Sega SG-1000", "sg1000_system", "sg", ["sg"], "SAVE_SG1000_")
+        total_save_size += save_size
+        total_rom_size += rom_size
+        build_config += "#define ENABLE_EMULATOR_SG1000\n" if rom_size > 0 else ""
 
         save_size, rom_size = self.generate_system("Core/Src/retro-go/pce_roms.c", "PC Engine", "pce_system", "pce", ["pce"], "SAVE_PCE_")
         total_save_size += save_size

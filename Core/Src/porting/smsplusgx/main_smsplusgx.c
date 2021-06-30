@@ -9,11 +9,15 @@
 #include "shared.h"
 #include "rom_manager.h"
 #include "common.h"
+#include "main_smsplusgx.h"
 
 #define APP_ID 3
 
 #define SMS_WIDTH 256
 #define SMS_HEIGHT 192
+
+#define COL_WIDTH   272
+#define COL_HEIGHT  208
 
 #define GG_WIDTH 160
 #define GG_HEIGHT 144
@@ -30,8 +34,10 @@ static uint32_t palette_spaced[32];
 
 static uint skipFrames = 0;
 
-static bool consoleIsGG = false;
+static bool consoleIsGG  = false;
 static bool consoleIsSMS = false;
+static bool consoleIsCOL = false;
+static bool consoleIsSG  = false;
 
 // TODO: Move to lcd.c/h
 extern LTDC_HandleTypeDef hltdc;
@@ -41,7 +47,8 @@ unsigned int crc32_le(unsigned int crc, unsigned char const * buf,unsigned int l
 
 // --- MAIN
 
-static int load_rom_from_flash(void)
+static int 
+load_rom_from_flash(uint8_t emu_engine)
 {
     static uint8 sram[0x8000];
     cart.rom = (uint8 *)ROM_DATA;
@@ -51,10 +58,19 @@ static int load_rom_from_flash(void)
     cart.crc = crc32_le(0, cart.rom, cart.size);
     cart.loaded = 1;
 
+    if (emu_engine == SMSPLUSGX_ENGINE_COLECO) {
+      option.console = 6; // Force Coleco
+    } else
+    if (emu_engine == SMSPLUSGX_ENGINE_SG1000) {
+      option.console = 5; // Force SG1000
+    }
     set_config();
-
     printf("%s: OK. cart.size=%d, cart.crc=%#010lx\n", __func__, (int)cart.size, cart.crc);
 
+    if (sms.console == CONSOLE_COLECO) {
+      extern const unsigned char ColecoVision_BIOS[];
+      coleco.rom = (uint8*)ColecoVision_BIOS;
+    }
     return 1;
 }
 
@@ -86,8 +102,8 @@ uint8_t *fb_buffer = emulator_framebuffer;
 
 #define CONV(_b0) ((0b11111000000000000000000000&_b0)>>10) | ((0b000001111110000000000&_b0)>>5) | ((0b0000000000011111&_b0));
 
-__attribute__((optimize("unroll-loops")))
-void blit_gg(bitmap_t *bmp, uint16_t *framebuffer) {	/* 160 x 144 -> 320 x 240 */
+static void 
+blit_gg(bitmap_t *bmp, uint16_t *framebuffer) {	/* 160 x 144 -> 320 x 240 */
     int y_src = 0;
     int y_dst = 0;
     for (; y_src < bmp->viewport.h; y_src += 3, y_dst += 5) {
@@ -114,8 +130,8 @@ void blit_gg(bitmap_t *bmp, uint16_t *framebuffer) {	/* 160 x 144 -> 320 x 240 *
     }
 }
 
-__attribute__((optimize("unroll-loops")))
-void blit_sms(bitmap_t *bmp, uint16_t *framebuffer) {	/* 256 x 192 -> 320 x 230 */
+static void 
+blit_sms(bitmap_t *bmp, uint16_t *framebuffer) {	/* 256 x 192 -> 320 x 230 */
     const int hpad = (WIDTH - 307) / 2;
     const int vpad = (HEIGHT - 230) / 2;
 
@@ -218,7 +234,106 @@ void sms_pcm_submit() {
     }
 }
 
-int app_main_smsplusgx(uint8_t load_state)
+static void sms_draw_frame() 
+{
+  static uint32_t lastFPSTime = 0;
+  static uint32_t frames = 0;
+
+  uint32_t currentTime = HAL_GetTick();
+  uint32_t delta = currentTime - lastFPSTime;
+  uint16_t* curr_framebuffer = NULL;
+
+  frames++;
+
+  if (delta >= 1000) {
+      int fps = (10000 * frames) / delta;
+      printf("FPS: %d.%d, frames %ld, delta %ld ms\n", fps / 10, fps % 10, frames, delta);
+      frames = 0;
+      lastFPSTime = currentTime;
+  }
+
+  render_copy_palette((uint16_t *)palette);
+  for (int i = 0; i < 32; i++) {
+      uint16_t p = (palette[i] << 8) | (palette[i] >> 8);
+      palette_spaced[i] = ((0b1111100000000000 & p) << 10) |
+                          ((0b0000011111100000 & p) << 5) |
+                          ((0b0000000000011111 & p));
+  }
+
+  curr_framebuffer = (active_framebuffer == 0 ? framebuffer1 : framebuffer2);
+  active_framebuffer ^= 1; // swap framebuffers
+
+  if (sms.console == CONSOLE_GG)     blit_gg(&bitmap, curr_framebuffer);
+  else                               blit_sms(&bitmap, curr_framebuffer);
+
+  HAL_LTDC_Reload(&hltdc, LTDC_RELOAD_VERTICAL_BLANKING);
+}
+
+static void sms_update_keys( odroid_gamepad_state_t* joystick )
+{
+  static uint32_t power_pressed = 0;
+  uint8 k = 0;
+
+  input.pad[0] = 0x00;
+  input.pad[1] = 0x00;
+  input.system = 0x00;
+
+  if (joystick->values[ODROID_INPUT_UP])    { input.pad[0] |= INPUT_UP;       k = 1; }
+  if (joystick->values[ODROID_INPUT_RIGHT]) { input.pad[0] |= INPUT_RIGHT;    k = 2; }
+  if (joystick->values[ODROID_INPUT_DOWN])  { input.pad[0] |= INPUT_DOWN;     k = 3; }
+  if (joystick->values[ODROID_INPUT_LEFT])  { input.pad[0] |= INPUT_LEFT;     k = 4; }
+  if (joystick->values[ODROID_INPUT_A])     { input.pad[0] |= INPUT_BUTTON2;  k = 5; }
+  if (joystick->values[ODROID_INPUT_B])     { input.pad[0] |= INPUT_BUTTON1;  k = 6; }
+
+  if (consoleIsGG)
+  {
+      if (joystick->values[ODROID_INPUT_SELECT]) input.system |= INPUT_PAUSE;
+      if (joystick->values[ODROID_INPUT_START])  input.system |= INPUT_START;
+  }
+  else if (consoleIsCOL)
+  {
+      // G&W Key      : Coleco
+      // Game         : 1
+      // Game + Up    : 2
+      // Game + Left  : 3
+      // Game + Down  : 4
+      // Game + Right : 5
+      // Game + A     : 6
+      // Game + B     : 0
+      // Time         : #
+      // Time + Up    : *
+      // Time + Left  : 9
+      // Time + Down  : 8
+      // Time + Right : 7
+      // Time + A     : 6
+      // Time + B     : 5
+
+      coleco.keypad[0] = 0xf0;
+      if (joystick->values[ODROID_INPUT_SELECT]) coleco.keypad[0] = 11 - k;
+      else
+      if (joystick->values[ODROID_INPUT_START])  coleco.keypad[0] = (1 + k) % 7;
+  }
+  else { // Default like SMS
+      if (joystick->values[ODROID_INPUT_SELECT]) input.system |= INPUT_PAUSE;
+      if (joystick->values[ODROID_INPUT_START])  input.system |= INPUT_START;
+  }
+
+  if (power_pressed != joystick->values[ODROID_INPUT_POWER]) {
+    power_pressed = joystick->values[ODROID_INPUT_POWER];
+    if (power_pressed) {
+        HAL_SAI_DMAStop(&hsai_BlockA1);
+        if(!joystick->values[ODROID_INPUT_VOLUME]) {
+            // Always save as long as PAUSE is not pressed
+            SaveState(NULL);
+        }
+        GW_EnterDeepSleep();
+    }
+  }
+}
+
+
+int 
+app_main_smsplusgx(uint8_t load_state, uint8_t is_coleco)
 {
     odroid_system_init(APP_ID, AUDIO_SAMPLE_RATE);
     odroid_system_emu_init(&LoadState, &SaveState, &netplay_callback);
@@ -226,18 +341,24 @@ int app_main_smsplusgx(uint8_t load_state)
     // Load ROM
     rg_app_desc_t *app = odroid_system_get_app();
 
-    load_rom_from_flash();
-
     system_reset_config();
+    load_rom_from_flash( is_coleco );
 
     sms.use_fm = 0;
 
-    // sms.dummy = framebuffer[0]; //A normal cart shouldn't access this memory ever. Point it to vram just in case.
+    if (sms.console == CONSOLE_COLECO) {
+        bitmap.width  = COL_WIDTH;
+        bitmap.height = COL_HEIGHT;
+        bitmap.pitch  = bitmap.width;
+        bitmap.data   = fb_buffer;
+    } else {
+        bitmap.width = SMS_WIDTH;
+        bitmap.height = SMS_HEIGHT;
+        bitmap.pitch = bitmap.width;
+        bitmap.data = fb_buffer;
+    }
 
-    bitmap.width = SMS_WIDTH;
-    bitmap.height = SMS_HEIGHT;
-    bitmap.pitch = bitmap.width;
-    bitmap.data = fb_buffer;
+    // sms.dummy = framebuffer[0]; //A normal cart shouldn't access this memory ever. Point it to vram just in case.
 
     option.sndrate = AUDIO_SAMPLE_RATE;
     option.overscan = 0;
@@ -251,30 +372,24 @@ int app_main_smsplusgx(uint8_t load_state)
 
     consoleIsSMS = sms.console == CONSOLE_SMS || sms.console == CONSOLE_SMS2;
     consoleIsGG  = sms.console == CONSOLE_GG || sms.console == CONSOLE_GGMS;
+    consoleIsCOL = sms.console == CONSOLE_COLECO;
+    consoleIsSG  = sms.console == CONSOLE_SG1000;
 
     const int refresh_rate = (sms.display == DISPLAY_NTSC) ? FPS_NTSC : FPS_PAL;
     const int frameTime = get_frame_time(refresh_rate);
     bool fullFrame = false;
 
-    void (*blit)(bitmap_t *, uint16_t *) = blit_sms;
-    if (sms.console == CONSOLE_GG)
-        blit = blit_gg;
-
     // Video
     memset(framebuffer1, 0, sizeof(framebuffer1));
     memset(framebuffer2, 0, sizeof(framebuffer2));
 
-    if (load_state)
-        LoadState(NULL);
-
-    uint32_t power_pressed = 0;
+    if (load_state) LoadState(NULL);
 
     while (true)
     {
         wdog_refresh();
 
         odroid_gamepad_state_t joystick;
-
         odroid_input_read_gamepad(&joystick);
 
         if (joystick.values[ODROID_INPUT_VOLUME]) {
@@ -292,74 +407,11 @@ int app_main_smsplusgx(uint8_t load_state)
         uint startTime = get_elapsed_time();
         bool drawFrame = !skipFrames;
 
-        input.pad[0] = 0x00;
-        input.pad[1] = 0x00;
-        input.system = 0x00;
-
-        if (joystick.values[ODROID_INPUT_UP])     input.pad[0] |= INPUT_UP;
-        if (joystick.values[ODROID_INPUT_DOWN])   input.pad[0] |= INPUT_DOWN;
-        if (joystick.values[ODROID_INPUT_LEFT])   input.pad[0] |= INPUT_LEFT;
-        if (joystick.values[ODROID_INPUT_RIGHT])  input.pad[0] |= INPUT_RIGHT;
-        if (joystick.values[ODROID_INPUT_A])      input.pad[0] |= INPUT_BUTTON2;
-        if (joystick.values[ODROID_INPUT_B])      input.pad[0] |= INPUT_BUTTON1;
-
-        if (consoleIsSMS)
-        {
-            if (joystick.values[ODROID_INPUT_SELECT]) input.system |= INPUT_PAUSE;
-            if (joystick.values[ODROID_INPUT_START])  input.system |= INPUT_START;
-        }
-        else if (consoleIsGG)
-        {
-            if (joystick.values[ODROID_INPUT_SELECT]) input.system |= INPUT_PAUSE;
-            if (joystick.values[ODROID_INPUT_START])  input.system |= INPUT_START;
-        }
-
-        if (power_pressed != joystick.values[ODROID_INPUT_POWER]) {
-            printf("Power toggle %ld=>%d\n", power_pressed, !power_pressed);
-            power_pressed = joystick.values[ODROID_INPUT_POWER];
-            if (power_pressed) {
-                printf("Power PRESSED %ld\n", power_pressed);
-                HAL_SAI_DMAStop(&hsai_BlockA1);
-                if(!joystick.values[ODROID_INPUT_VOLUME]) {
-                    // Always save as long as PAUSE is not pressed
-                    SaveState(NULL);
-                }
-
-                GW_EnterDeepSleep();
-            }
-        }
+        sms_update_keys( &joystick );
 
         system_frame(!drawFrame);
 
-        if (drawFrame)
-        {
-            static uint32_t lastFPSTime = 0;
-            static uint32_t frames = 0;
-            uint32_t currentTime = HAL_GetTick();
-            uint32_t delta = currentTime - lastFPSTime;
-
-            frames++;
-
-            if (delta >= 1000) {
-                int fps = (10000 * frames) / delta;
-                printf("FPS: %d.%d, frames %ld, delta %ld ms\n", fps / 10, fps % 10, frames, delta);
-                frames = 0;
-                lastFPSTime = currentTime;
-            }
-
-            render_copy_palette((uint16_t *)&palette);
-            for (int i = 0; i < 32; i++) {
-                uint16_t p = (palette[i] << 8) | (palette[i] >> 8);
-                palette_spaced[i] = ((0b1111100000000000 & p) << 10) |
-                                    ((0b0000011111100000 & p) << 5) |
-                                    ((0b0000000000011111 & p));
-            }
-
-            blit(&bitmap, (active_framebuffer == 0 ? framebuffer1 : framebuffer2));
-            active_framebuffer ^= 1; // swap framebuffers
-
-            HAL_LTDC_Reload(&hltdc, LTDC_RELOAD_VERTICAL_BLANKING);
-        }
+        if (drawFrame) sms_draw_frame();
 
         // See if we need to skip a frame to keep up
         if (skipFrames == 0)
