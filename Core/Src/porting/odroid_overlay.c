@@ -551,9 +551,11 @@ static void draw_game_status_bar(runtime_stats_t stats)
 
     //const char *romPath = odroid_system_get_app()->romPath;
 
-    //snprintf(header, 40, "       ",
-    //round(stats.totalFPS), round(stats.skippedFPS), round(stats.busyPercent));
-    //snprintf(bottom, 40, "%s", romPath ? (romPath + strlen(ODROID_BASE_PATH_ROMS)) : "  ");
+    snprintf(header, 40, "FPS: %d.%d (%d.%d) / BUSY: %d.%d%%",
+        (int) stats.totalFPS,    (int) fmod(stats.totalFPS * 10, 10),
+        (int) stats.skippedFPS,  (int) fmod(stats.skippedFPS * 10, 10),
+        (int) stats.busyPercent, (int) fmod(stats.busyPercent * 10, 10));
+    snprintf(bottom, 40, "%s", romPath ? (romPath + strlen(ODROID_BASE_PATH_ROMS)) : "N/A");
 
     odroid_overlay_draw_fill_rect(0, 0, width, height, C_GW_RED);
     odroid_overlay_draw_fill_rect(0, ODROID_SCREEN_HEIGHT - height, width, height, C_GW_RED);
@@ -580,13 +582,9 @@ int odroid_overlay_game_settings_menu(odroid_dialog_choice_t *extra_options)
         memcpy(&options[options_count], extra_options, (extra_options_count + 1) * sizeof(odroid_dialog_choice_t));
     }
 
-    // Collect stats before freezing emulation with wait_all_keys_released()
-    runtime_stats_t stats = odroid_system_get_stats();
-
     odroid_audio_mute(true);
     while (odroid_input_key_is_pressed(ODROID_INPUT_ANY))
         wdog_refresh();
-    draw_game_status_bar(stats);
 
     int r = odroid_overlay_settings_menu(options);
 
@@ -638,6 +636,9 @@ int odroid_overlay_game_menu(odroid_dialog_choice_t *extra_options)
 
     int r = odroid_overlay_dialog("Retro-Go", choices, 0);
 
+    // Clear startup file so we boot into the retro-go gui
+    odroid_settings_StartupFile_set(NULL);
+
     switch (r)
     {
         case 10: odroid_system_emu_save_state(0); break;
@@ -648,6 +649,9 @@ int odroid_overlay_game_menu(odroid_dialog_choice_t *extra_options)
         case 90: GW_EnterDeepSleep(); break;
         case 100: odroid_system_switch_app(0); break;
     }
+
+    // Required to reset the timestamps (we don't run a background stats task)
+    (void) odroid_system_get_stats();
 
     odroid_audio_mute(false);
 

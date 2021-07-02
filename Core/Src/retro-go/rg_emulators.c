@@ -110,6 +110,8 @@ static void add_emulator(const char *system, const char *dirname, const char* ex
     p->crc_offset = crc_offset;
 
     gui_add_tab(dirname, logo, header, p, event_handler);
+
+    emulator_init(p);
 }
 
 void emulator_init(retro_emulator_t *emu)
@@ -347,7 +349,7 @@ void emulator_show_file_menu(retro_emulator_file_t *file)
 
     if (sel == 0 || sel == 1) {
         gui_save_current_tab();
-        emulator_start(file, sel == 0);
+        emulator_start(file, sel == 0, false);
     }
     else if (sel == 2) {
         if (odroid_overlay_confirm("Supprimer sauvegarde?", false) == 1) {
@@ -365,7 +367,7 @@ void emulator_show_file_menu(retro_emulator_file_t *file)
     // free(sram_path);
 }
 
-void emulator_start(retro_emulator_file_t *file, bool load_state)
+void emulator_start(retro_emulator_file_t *file, bool load_state, bool start_paused)
 {
     printf("Retro-Go: Starting game: %s\n", file->name);
     rom_manager_set_active_file(file);
@@ -382,14 +384,14 @@ void emulator_start(retro_emulator_file_t *file, bool load_state)
         memcpy(&__RAM_EMU_START__, &_OVERLAY_GB_LOAD_START, (size_t)&_OVERLAY_GB_SIZE);
         memset(&_OVERLAY_GB_BSS_START, 0x0, (size_t)&_OVERLAY_GB_BSS_SIZE);
         SCB_CleanDCache_by_Addr((uint32_t *)&__RAM_EMU_START__, (size_t)&_OVERLAY_GB_SIZE);
-        app_main_gb(load_state);
+        app_main_gb(load_state, start_paused);
 #endif
     } else if(strcmp(emu->system_name, "Nintendo Entertainment System") == 0) {
 #ifdef ENABLE_EMULATOR_NES
         memcpy(&__RAM_EMU_START__, &_OVERLAY_NES_LOAD_START, (size_t)&_OVERLAY_NES_SIZE);
         memset(&_OVERLAY_NES_BSS_START, 0x0, (size_t)&_OVERLAY_NES_BSS_SIZE);
         SCB_CleanDCache_by_Addr((uint32_t *)&__RAM_EMU_START__, (size_t)&_OVERLAY_NES_SIZE);
-        app_main_nes(load_state);
+        app_main_nes(load_state, start_paused);
 #endif
     } else if(strcmp(emu->system_name, "Sega Master System") == 0 ||
               strcmp(emu->system_name, "Sega Game Gear") == 0     ||
@@ -399,17 +401,17 @@ void emulator_start(retro_emulator_file_t *file, bool load_state)
         memcpy(&__RAM_EMU_START__, &_OVERLAY_SMS_LOAD_START, (size_t)&_OVERLAY_SMS_SIZE);
         memset(&_OVERLAY_SMS_BSS_START, 0x0, (size_t)&_OVERLAY_SMS_BSS_SIZE);
         SCB_CleanDCache_by_Addr((uint32_t *)&__RAM_EMU_START__, (size_t)&_OVERLAY_SMS_SIZE);
-        if (! strcmp(emu->system_name, "Colecovision")) app_main_smsplusgx(load_state, SMSPLUSGX_ENGINE_COLECO);
+        if (! strcmp(emu->system_name, "Colecovision")) app_main_smsplusgx(load_state, start_paused, SMSPLUSGX_ENGINE_COLECO);
         else
-        if (! strcmp(emu->system_name, "Sega SG-1000")) app_main_smsplusgx(load_state, SMSPLUSGX_ENGINE_SG1000);
-        else                                            app_main_smsplusgx(load_state, SMSPLUSGX_ENGINE_OTHERS);
+        if (! strcmp(emu->system_name, "Sega SG-1000")) app_main_smsplusgx(load_state, start_paused, SMSPLUSGX_ENGINE_SG1000);
+        else                                            app_main_smsplusgx(load_state, start_paused, SMSPLUSGX_ENGINE_OTHERS);
 #endif
     } else if(strcmp(emu->system_name, "PC Engine") == 0) {
 #ifdef ENABLE_EMULATOR_PCE
       memcpy(&__RAM_EMU_START__, &_OVERLAY_PCE_LOAD_START, (size_t)&_OVERLAY_PCE_SIZE);
       memset(&_OVERLAY_PCE_BSS_START, 0x0, (size_t)&_OVERLAY_PCE_BSS_SIZE);
       SCB_CleanDCache_by_Addr((uint32_t *)&__RAM_EMU_START__, (size_t)&_OVERLAY_PCE_SIZE);
-      app_main_pce(load_state);
+      app_main_pce(load_state, start_paused);
 #endif
   }
     
@@ -458,4 +460,17 @@ void emulators_init()
     // add_emulator("PC Engine", "pce", "pce", "huexpress-go", 0, logo_pce, header_pce);
     // add_emulator("Atari Lynx", "lnx", "lnx", "handy-go", 64, logo_lnx, header_lnx);
     // add_emulator("Atari 2600", "a26", "a26", "stella-go", 0, logo_a26, header_a26);
+}
+
+bool emulator_is_file_valid(retro_emulator_file_t *file)
+{
+    for (int i = 0; i < emulators_count; i++) {
+        for (int j = 0; j < emulators[i].roms.count; j++) {
+            if (&emulators[i].roms.files[j] == file) {
+                return true;
+            }
+        }
+    }
+
+    return false;
 }
