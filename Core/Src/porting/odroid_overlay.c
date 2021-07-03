@@ -550,13 +550,13 @@ static void draw_game_status_bar(runtime_stats_t stats)
     char bottom[40], header[40];
 
     //const char *romPath = odroid_system_get_app()->romPath;
-
+/*
     snprintf(header, 40, "FPS: %d.%d (%d.%d) / BUSY: %d.%d%%",
         (int) stats.totalFPS,    (int) fmod(stats.totalFPS * 10, 10),
         (int) stats.skippedFPS,  (int) fmod(stats.skippedFPS * 10, 10),
         (int) stats.busyPercent, (int) fmod(stats.busyPercent * 10, 10));
     snprintf(bottom, 40, "%s", romPath ? (romPath + strlen(ODROID_BASE_PATH_ROMS)) : "N/A");
-
+*/
     odroid_overlay_draw_fill_rect(0, 0, width, height, C_GW_RED);
     odroid_overlay_draw_fill_rect(0, ODROID_SCREEN_HEIGHT - height, width, height, C_GW_RED);
     //odroid_overlay_draw_text(0, pad_text, width, header, C_GW_YELLOW, C_GW_RED);
