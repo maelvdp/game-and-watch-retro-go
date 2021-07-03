@@ -88,6 +88,8 @@ void odroid_system_switch_app(int app)
 
     switch (app) {
     case 0:
+        odroid_settings_StartupFile_set(0);
+        odroid_settings_commit();
         NVIC_SystemReset();
         break;
     default:
@@ -116,6 +118,8 @@ runtime_stats_t odroid_system_get_stats()
 void odroid_system_sleep(void)
 {
     odroid_settings_StartupFile_set(ACTIVE_FILE);
+
+    odroid_settings_commit();
 
     GW_EnterDeepSleep();
 }

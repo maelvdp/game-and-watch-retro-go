@@ -1,6 +1,7 @@
 #include <odroid_system.h>
 #include <stdarg.h>
 #include <stdio.h>
+#include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
@@ -27,7 +28,7 @@ static const uint8_t *flash_manufacturer_str(uint8_t manufacturer)
 #define KEY_SHOW_EMPTY    "ShowEmptyTabs"
 #define KEY_SHOW_COVER    "ShowGameCover"
 
-static bool font_size_cb(odroid_dialog_choice_t *option, odroid_dialog_event_t event)
+static bool font_size_cb(odroid_dialog_choice_t *option, odroid_dialog_event_t event, uint32_t repeat)
 {
     int font_size = odroid_overlay_get_font_size();
     if (event == ODROID_DIALOG_PREV && font_size > 8) {
@@ -45,7 +46,7 @@ static bool font_size_cb(odroid_dialog_choice_t *option, odroid_dialog_event_t e
     return event == ODROID_DIALOG_ENTER;
 }
 
-static bool show_empty_cb(odroid_dialog_choice_t *option, odroid_dialog_event_t event)
+static bool show_empty_cb(odroid_dialog_choice_t *option, odroid_dialog_event_t event, uint32_t repeat)
 {
     if (event == ODROID_DIALOG_PREV || event == ODROID_DIALOG_NEXT) {
         gui.show_empty = !gui.show_empty;
@@ -55,7 +56,7 @@ static bool show_empty_cb(odroid_dialog_choice_t *option, odroid_dialog_event_t 
     return event == ODROID_DIALOG_ENTER;
 }
 
-static bool startup_app_cb(odroid_dialog_choice_t *option, odroid_dialog_event_t event)
+static bool startup_app_cb(odroid_dialog_choice_t *option, odroid_dialog_event_t event, uint32_t repeat)
 {
     int startup_app = odroid_settings_StartupApp_get();
     if (event == ODROID_DIALOG_PREV || event == ODROID_DIALOG_NEXT) {
@@ -66,7 +67,7 @@ static bool startup_app_cb(odroid_dialog_choice_t *option, odroid_dialog_event_t
     return event == ODROID_DIALOG_ENTER;
 }
 
-static bool show_cover_cb(odroid_dialog_choice_t *option, odroid_dialog_event_t event)
+static bool show_cover_cb(odroid_dialog_choice_t *option, odroid_dialog_event_t event, uint32_t repeat)
 {
     if (event == ODROID_DIALOG_PREV) {
         if (--gui.show_cover < 0) gui.show_cover = 2;
@@ -82,7 +83,7 @@ static bool show_cover_cb(odroid_dialog_choice_t *option, odroid_dialog_event_t 
     return event == ODROID_DIALOG_ENTER;
 }
 
-static bool color_shift_cb(odroid_dialog_choice_t *option, odroid_dialog_event_t event)
+static bool color_shift_cb(odroid_dialog_choice_t *option, odroid_dialog_event_t event, uint32_t repeat)
 {
     int max = gui_themes_count - 1;
     if (event == ODROID_DIALOG_PREV) {
@@ -101,7 +102,47 @@ static bool color_shift_cb(odroid_dialog_choice_t *option, odroid_dialog_event_t
 
 #endif
 
+static bool main_menu_timeout_cb(odroid_dialog_choice_t *option, odroid_dialog_event_t event, uint32_t repeat)
+{
+    uint16_t timeout = odroid_settings_MainMenuTimeoutS_get();
+    int step = 1;
+    const int threshold = 10;
+    const int fast_step = 10;
 
+    if (repeat > threshold) {
+        step = fast_step;
+    }
+
+    if (event == ODROID_DIALOG_PREV) {
+        if (timeout - step < 10) {
+            // Lower than 10 seconds doesn't make sense. set to 0 = disabled
+            odroid_settings_MainMenuTimeoutS_set(0);
+            return false;
+        }
+
+        odroid_settings_MainMenuTimeoutS_set(timeout - step);
+        gui_redraw();
+    }
+    if (event == ODROID_DIALOG_NEXT) {
+        if (timeout == 0) {
+            odroid_settings_MainMenuTimeoutS_set(10);
+            gui_redraw();
+            return false;
+        }
+        else if (timeout == 0xffff) {
+            return false;
+        }
+        
+        if (timeout > (0xffff - step)) {
+            step = 0xffff - timeout;
+        }
+
+        odroid_settings_MainMenuTimeoutS_set(timeout + step);
+        gui_redraw();
+    }
+    sprintf(option->value, "%d s", odroid_settings_MainMenuTimeoutS_get());
+    return event == ODROID_DIALOG_ENTER;
+}
 
 static inline bool tab_enabled(tab_t *tab)
 {
@@ -124,6 +165,7 @@ void retro_loop()
     int last_key = -1;
     int repeat = 0;
     int selected_tab_last = -1;
+    uint32_t idle_s;
 
     // Read the initial state as to not trigger on button held down during boot
     odroid_input_read_gamepad(&gui.joystick);
@@ -140,6 +182,13 @@ void retro_loop()
     while (true)
     {
         wdog_refresh();
+
+        if (gui.idle_start == 0) {
+            gui.idle_start = uptime_get();
+        }
+
+        idle_s = uptime_get() - gui.idle_start;
+
         if (gui.selected != selected_tab_last)
         {
             int direction = (gui.selected - selected_tab_last) < 0 ? -1 : 1;
@@ -171,11 +220,11 @@ void retro_loop()
 
         odroid_input_read_gamepad(&gui.joystick);
 
-        if (gui.idle_counter > 0 && gui.joystick.bitmask == 0)
+        if (idle_s > 0 && gui.joystick.bitmask == 0)
         {
             gui_event(TAB_IDLE, tab);
 
-            if (gui.idle_counter % 100 == 0)
+            if (idle_s % 10 == 0)
                 gui_draw_status(tab);
         }
 
@@ -190,7 +239,7 @@ void retro_loop()
                     {0, "", "kbeckmann", 1, NULL},
                     {0, "", "stacksmashing", 1, NULL},
                     {0, "", "", -1, NULL},
-                    {2, "Debug menu", "", 1, NULL},
+                    //{2, "Debug menu", "", 1, NULL},
                     {1, "Reset settings", "", 1, NULL},
                     {0, "Close", "", 1, NULL},
                     ODROID_DIALOG_CHOICE_LAST
@@ -199,7 +248,7 @@ void retro_loop()
                 int sel = odroid_overlay_dialog("Retro-Go", choices, -1);
                 if (sel == 1) {
                     // Reset settings
-                    if (odroid_overlay_confirm("Reset all settings? (TODO)", false) == 1) {
+                    if (odroid_overlay_confirm("Reset all settings?", false) == 1) {
                         odroid_settings_reset();
                         odroid_system_switch_app(0); // reset
                     }
@@ -247,8 +296,10 @@ void retro_loop()
                 gui_redraw();
             }
             else if (last_key == ODROID_INPUT_VOLUME) {
+                char timeout_value[32];
                 odroid_dialog_choice_t choices[] = {
-                    // {0, "---", "", -1, NULL},
+                    {0, "---", "", -1, NULL},
+                    {0, "Idle power off", timeout_value, 1, &main_menu_timeout_cb},
                     // {0, "Color theme", "1/10", 1, &color_shift_cb},
                     // {0, "Font size", "Small", 1, &font_size_cb},
                     // {0, "Show cover", "Yes", 1, &show_cover_cb},
@@ -289,7 +340,7 @@ void retro_loop()
                 gui_event(KEY_PRESS_B, tab);
             }
             else if (last_key == ODROID_INPUT_POWER) {
-                GW_EnterDeepSleep();
+                odroid_system_sleep();
             }
         }
         if (repeat > 0)
@@ -299,12 +350,14 @@ void retro_loop()
                 last_key = -1;
                 repeat = 0;
             }
+            gui.idle_start = uptime_get();
         }
 
-        if (gui.joystick.bitmask) {
-            gui.idle_counter = 0;
-        } else {
-            gui.idle_counter++;
+        idle_s = uptime_get() - gui.idle_start;
+        if (odroid_settings_MainMenuTimeoutS_get() != 0 &&
+            (idle_s > odroid_settings_MainMenuTimeoutS_get())) {
+          printf("Idle timeout expired\n");
+          odroid_system_sleep();
         }
 
         gui_redraw();
