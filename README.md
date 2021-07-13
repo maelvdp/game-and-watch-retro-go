@@ -16,13 +16,11 @@ Supported emulators:
 
 :exclamation: Please read this before reporting issues.
 
-You may run the script `./report_issue.sh` and follow the steps lined out, or continue reading:
-
 Please include the following:
 
 - Name of the emulator (nes, gb, etc.)
 - The full name of the ROM you are running, e.g. "Super_Tilt_Bro_(E).nes"
-- The git hash of this repo and the submodule. Run the following: `git describe --all --long --dirty=-dirty; cd retro-go-stm32; git describe --all --long --dirty=-dirty`
+- The git hash of this repo and the submodule. Please run the following and include the output in the report: `git describe --all --long --dirty=-dirty; cd retro-go-stm32; git describe --all --long --dirty=-dirty`
 
 With this information, please head over to the [Discord](https://discord.gg/vVcwrrHTNJ) and post in the #support channel. If you don't want to use discord for some reason, please create an issue.
 
@@ -70,6 +68,9 @@ git clone --recurse-submodules https://github.com/kbeckmann/game-and-watch-retro
 
 cd game-and-watch-retro-go
 
+# Install python dependencies, this is optional for basic uses (but recommended!)
+python3 -m pip install -r requirements.txt
+
 # Place roms in the appropriate folders:
 # cp /path/to/rom.gb ./roms/gb/
 # cp /path/to/rom.nes ./roms/nes/
@@ -79,9 +80,12 @@ cd game-and-watch-retro-go
 # make download_sdk
 
 # Build and program external and internal flash.
-# Note: If you are using the 16MB external flash, build using:
+# Notes:
+#     * If you are using the 16MB external flash, build using:
 #           make -j8 LARGE_FLASH=1 flash
-#       A custom flash size may be specified with the EXTFLASH_SIZE variable.
+#       A custom flash size in bytes may be specified with the EXTFLASH_SIZE variable.
+#     * If you'd like to apply more advanced experimental ROM compression, add the
+#       field COMPRESS=zopfli to the make command.
 
 make -j8 flash
 ```
@@ -113,20 +117,47 @@ docker run --rm -it --privileged -v /dev/bus/usb:/dev/bus/usb kbeckmann/retro-go
 
 # In case you get access errors when flashing, you may run sudo inside the docker container. The proper way is to fix the udev rules, but at least this is a way forward in case you are stuck.
 # docker run --rm -it --privileged -v /dev/bus/usb:/dev/bus/usb kbeckmann/retro-go-builder sudo -E make ADAPTER=stlink LARGE_FLASH=0 -j$(nproc) flash
+```
 
+## Experimental
+
+Features mentioned in this section are disabled by default and should be considered
+as upcoming features that need more testing. Give them a try!
+
+### Advanced ROM Compression
+
+The current default compression method is `lz4`, which is incredibly fast to both
+compress and decompress. However, it's compression ratio pales in comparison
+compared to some other compression method. We recently added [zopfli](https://github.com/google/zopfli)
+as a compressor to generate data to be decompressed by miniz on-device. This
+yields a higher compression ratio (see graph below), but at the cost of
+compression speed and (more importantly) decompression speed. Note that this
+benchmark was done on a desktop, not on-device. Decompression has to be fast
+enough to not be noticeable to the user, especially for gameboy games where memory
+banks are dynamically decompressed on-demand.
+
+<img src="assets/decompression-benchmark-annotated.jpg" width="800"/>
+
+To use zopfli compression, make sure the python dependencies are installed
+and add `COMPRESS=zopfli` to the `make` command. For example:
+
+```
+make -j8 LARGE_FLASH=1 COMPRESS=zopfli flash
 ```
 
 ## Backing up and restoring save state files
 
-Save states can be backed up using `./dump_saves.sh build/gw_retro_go.elf`. Make sure to use the elf file that matches what is running on your device! It is a good idea to keep this elf file in case you want to back up at a later time.
+Save states can be backed up using `./scripts/saves_backup.sh build/gw_retro_go.elf`. Make sure to use the elf file that matches what is running on your device! It is a good idea to keep this elf file in case you want to back up at a later time.
 
 This downloads all save states to the local directory `./save_states`. Each save state will be located in `./save_states/<emu>/<rom name>.save`.
 
 After this, it's safe to change roms, pull new code and build & flash the device.
 
-Save states can then be programmed to the device using a newer elf file with new code and roms. To do this, run `./program_saves.sh build/gw_retro_go.elf` - this time with the _new_ elf file that matches what's running on the device. Save this elf file for backup later on.
+Save states can then be programmed to the device using a newer elf file with new code and roms. To do this, run `./scripts/saves_restore.sh build/gw_retro_go.elf` - this time with the _new_ elf file that matches what's running on the device. Save this elf file for backup later on. This can also be achieved with `make flash_saves_restore`.
 
-`program_saves.sh` will upload all save state files that you have backed up that are also included in the elf file. E.g Let's say you back up saves for rom A, B and C. Later on, you add a new rom D but remove A, then build and flash. When running the script, the save states for B and C will be programmed and nothing else.
+`saves_restore.sh` will upload all save state files that you have backed up that are also included in the elf file. E.g Let's say you back up saves for rom A, B and C. Later on, you add a new rom D but remove A, then build and flash. When running the script, the save states for B and C will be programmed and nothing else.
+
+You can also erase all of the save slots by running `make flash_saves_erase`.
 
 ## Upgrading the flash
 

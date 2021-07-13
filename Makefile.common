@@ -25,11 +25,16 @@ else
 endif
 
 # Compress supported ROMs by default. Set to 0 to disable.
-COMPRESS ?= 1
-ifeq ($(COMPRESS),1)
-	COMPRESS_PARAM := --compress
-else
-	COMPRESS_PARAM := --no-compress
+COMPRESS ?= lz4
+ifdef COMPRESS
+	COMPRESS_PARAM := --compress=$(COMPRESS)
+endif
+
+# Reset the DBGMCU configuration register (DBGMCU_CR) after flashing
+# Set to 0 to keep the clocks running when suspended (makes debugging easier)
+RESET_DBGMCU ?= 1
+ifeq ($(RESET_DBGMCU),1)
+	RESET_DBGMCU_CMD = $(MAKE) reset_dbgmcu
 endif
 
 PYTHON3 ?= /usr/bin/env python3
@@ -44,7 +49,7 @@ BUILD_DIR ?= build
 
 # Common C sources
 C_SOURCES +=  \
-retro-go-stm32/components/lupng/lupng.c \
+retro-go-stm32/components/lupng/miniz.c \
 retro-go-stm32/retro-go/main/gui.c \
 Core/Src/porting/gw_alloc.c \
 Core/Src/retro-go/rg_main.c \
@@ -302,12 +307,12 @@ $(eval $(foreach obj,$(SDK_C_SOURCES) $(SDK_ASM_SOURCES),$(call sdk_obj_prereq_g
 FORCE:
 
 Core/Inc/githash.h: FORCE | $(BUILD_DIR)
-	$(V)./update_githash.sh $@
+	$(V)./scripts/update_githash.sh $@
 
 # Run parse_roms.py to generate information about the roms
 $(BUILD_DIR)/rom_files.txt: FORCE | $(BUILD_DIR)
 	$(V)$(ECHO) [ BASH ] Checking for updated roms
-	$(V)./update_rom_files.sh build/rom_files.txt roms/gb roms/nes roms/sms roms/gg roms/col roms/pce roms/sg
+	$(V)./scripts/update_rom_files.sh build/rom_files.txt roms/gb roms/nes roms/sms roms/gg roms/col roms/pce roms/sg
 
 $(BUILD_DIR)/roms.a: $(BUILD_DIR)/rom_files.txt parse_roms.py
 	$(V)$(ECHO) [ PYTHON3 ] $(notdir $<)
@@ -369,7 +374,7 @@ $(BUILD_DIR)/$(TARGET).elf: CheckTools $(OBJECTS) $(NES_OBJECTS) $(GNUBOY_OBJECT
 	$(V)$(ECHO) [ LD ] $(notdir $@)
 	$(V)$(CC) $(OBJECTS) $(NES_OBJECTS) $(GNUBOY_OBJECTS) $(SMSPLUSGX_OBJECTS) $(PCE_OBJECTS) $(LDFLAGS) -o $@
 	$(V)$(SZ) $@
-	$(V)./size.sh $@
+	$(V)./scripts/size.sh $@
 
 $(BUILD_DIR)/core/%.o: %.c Makefile Makefile.common $(SDK_HEADERS) $(BUILD_DIR)/config.h | $(BUILD_DIR) CheckDirtySubmodules
 	$(V)$(ECHO) [ CC core ] $(notdir $<)
@@ -431,10 +436,31 @@ flash_extflash: $(BUILD_DIR)/$(TARGET)_extflash.bin
 flash:
 	$(V)$(MAKE) flash_extflash
 	$(V)$(MAKE) flash_intflash
+	$(V)$(RESET_DBGMCU_CMD)
 .PHONY: flash
 
 # Alias for flash
 flash_all: flash
+
+# Transfers save files from the device to the host machine
+flash_saves_backup: $(BUILD_DIR)/$(TARGET).elf
+	$(V)./scripts/saves_backup.sh $<
+.PHONY: flash_saves_backup
+
+# Transfers save files from the host machine to the device
+flash_saves_restore: $(BUILD_DIR)/$(TARGET).elf
+	$(V)./scripts/saves_restore.sh $<
+.PHONY: flash_saves_restore
+
+# Erases the saveflash area on the device
+flash_saves_erase: $(BUILD_DIR)/$(TARGET).elf
+	$(V)./scripts/saves_erase.sh $<
+.PHONY: flash_saves_erase
+
+reset_dbgmcu:
+	# Reset the DBGMCU configuration register (DBGMCU_CR)
+	$(V)$(OPENOCD) -f $(FLSHLD_DIR)/interface_$(ADAPTER).cfg -c "init; halt; mww 0x5C001004 0x00000000; resume; exit;"
+.PHONY: reset_dbgmcu
 
 gdb: $(BUILD_DIR)/$(TARGET).elf
 	$(GDB) $< -ex "target extended-remote :3333"
