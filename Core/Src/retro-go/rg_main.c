@@ -299,7 +299,7 @@ void retro_loop()
                 char timeout_value[32];
                 odroid_dialog_choice_t choices[] = {
                     {0, "---", "", -1, NULL},
-                    {0, "Idle power off", timeout_value, 1, &main_menu_timeout_cb},
+                    {0, "Mise en veille", timeout_value, 1, &main_menu_timeout_cb},
                     // {0, "Color theme", "1/10", 1, &color_shift_cb},
                     // {0, "Font size", "Small", 1, &font_size_cb},
                     // {0, "Show cover", "Yes", 1, &show_cover_cb},
