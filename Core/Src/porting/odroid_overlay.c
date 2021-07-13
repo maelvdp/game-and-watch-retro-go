@@ -165,8 +165,8 @@ void odroid_overlay_draw_battery(int x_pos, int y_pos)
 {
     uint16_t percentage = odroid_input_read_battery().percentage;
     odroid_battery_charge_state_t battery_state = odroid_input_read_battery().state;
-    uint16_t color_fill = C_GW_YELLOW;
-    uint16_t color_border = C_GW_YELLOW;
+    uint16_t color_fill = C_GREEN;
+    uint16_t color_border = C_BLACK;
     uint16_t color_empty = C_GW_RED;
     uint16_t color_battery = C_BLACK;
     uint16_t width_fill = 20.f / 100 * percentage;
@@ -175,7 +175,7 @@ void odroid_overlay_draw_battery(int x_pos, int y_pos)
     if (percentage < 20)
         color_fill = C_RED;
     else if (percentage < 40)
-        color_fill = C_ORANGE;
+        color_fill = C_GW_YELLOW;
 
     odroid_overlay_draw_rect(x_pos, y_pos, 22, 10, 1, color_border);
     odroid_overlay_draw_rect(x_pos + 22, y_pos + 2, 2, 6, 1, color_border);
@@ -188,9 +188,9 @@ void odroid_overlay_draw_battery(int x_pos, int y_pos)
             break;
         case ODROID_BATTERY_CHARGE_STATE_CHARGING:
             odroid_overlay_draw_fill_rect(x_pos + 22/2 - 1, y_pos + 10/2 - 3, 2, 6, color_battery);
-        case ODROID_BATTERY_CHARGE_STATE_DISCHARGING:
-            odroid_overlay_draw_fill_rect(x_pos + 22/2 - 3, y_pos + 10/2 - 1, 6, 2, color_battery);
-            break;
+        //case ODROID_BATTERY_CHARGE_STATE_DISCHARGING:
+        //    odroid_overlay_draw_fill_rect(x_pos + 22/2 - 3, y_pos + 10/2 - 1, 6, 2, color_battery);
+        //    break;
         case ODROID_BATTERY_CHARGE_STATE_FULL:
             break;
     }
@@ -556,9 +556,10 @@ static void draw_game_status_bar(runtime_stats_t stats)
         (int) stats.skippedFPS,  (int) fmod(stats.skippedFPS * 10, 10),
         (int) stats.busyPercent, (int) fmod(stats.busyPercent * 10, 10));
     snprintf(bottom, 40, "%s", romPath ? (romPath + strlen(ODROID_BASE_PATH_ROMS)) : "N/A");
-*/
+
     odroid_overlay_draw_fill_rect(0, 0, width, height, C_GW_RED);
     odroid_overlay_draw_fill_rect(0, ODROID_SCREEN_HEIGHT - height, width, height, C_GW_RED);
+*/
     //odroid_overlay_draw_text(0, pad_text, width, header, C_GW_YELLOW, C_GW_RED);
     //odroid_overlay_draw_text(0, ODROID_SCREEN_HEIGHT - height + pad_text, width, bottom, C_GW_YELLOW, C_GW_RED);
     odroid_overlay_draw_battery(width - 26, 3);
@@ -616,11 +617,11 @@ int odroid_overlay_game_menu(odroid_dialog_choice_t *extra_options)
         {0, "Reprendre", "",  1, NULL},
         {10, "Sauver & Reprendre", "",  1, NULL},
         {20, "Sauver & Quitter", "", 1, NULL},
-        {30, "Relancer", "", 1, NULL},
+        {30, "Charger sauvegarde", "", 1, NULL},
         {40, "Options", "", 1, NULL},
        // {50, "Tools", "", 1, NULL},
         {90, "Eteindre", "", 1, NULL},
-        {100, "Quitter vers menu", "", 1, NULL},
+        {100, "Quitter", "", 1, NULL},
         ODROID_DIALOG_CHOICE_LAST
     };
 
