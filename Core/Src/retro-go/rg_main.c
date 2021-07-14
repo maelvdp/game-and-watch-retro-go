@@ -271,10 +271,10 @@ void retro_loop()
                         {0, "Flash JEDEC ID", jedec_id_str, 1, NULL},
                         {0, "Flash manufacturer", flash_manufacturer_str(jedec_id[0]), 1, NULL},
                         {0, "Flash status", status_str, 1, NULL},
-                        {0, "------------------", "", 1, NULL},
+                        {0, "---", "", -1, NULL},
                         {1, "Set Quad Enable", "", 1, NULL},
                         {2, "Clear Quad Enable", "", 1, NULL},
-                        {0, "------------------", "", 1, NULL},
+                        {0, "---", "", -1, NULL},
                         {0, "Close", "", 1, NULL},
                         ODROID_DIALOG_CHOICE_LAST
                     };
@@ -311,22 +311,22 @@ void retro_loop()
                 odroid_overlay_settings_menu(choices);
                 gui_redraw();
             }
-            else if (last_key == ODROID_INPUT_UP) {
+            else if (last_key == ODROID_INPUT_LEFT) {
                 gui_scroll_list(tab, LINE_UP);
                 repeat++;
             }
-            else if (last_key == ODROID_INPUT_DOWN) {
+            else if (last_key == ODROID_INPUT_RIGHT) {
                 gui_scroll_list(tab, LINE_DOWN);
                 repeat++;
             }
-            else if (last_key == ODROID_INPUT_LEFT) {
+            else if (last_key == ODROID_INPUT_UP) {
                 gui.selected--;
                 if(gui.selected < 0) {
                     gui.selected = gui.tabcount - 1;
                 }
                 repeat++;
             }
-            else if (last_key == ODROID_INPUT_RIGHT) {
+            else if (last_key == ODROID_INPUT_DOWN) {
                 gui.selected++;
                 if(gui.selected >= gui.tabcount) {
                     gui.selected = 0;
