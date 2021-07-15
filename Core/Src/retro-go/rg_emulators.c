@@ -328,13 +328,13 @@ void emulator_show_file_menu(retro_emulator_file_t *file)
 
     bool has_save = 1;
     bool has_sram = 0;
-    //bool is_fav = 0;
+    bool is_fav = 0;
 
     odroid_dialog_choice_t choices[] = {
         {0, "Reprendre          ", "", has_save, NULL},
         {1, "Nouveau jeux       ", "", 1, NULL},
-        {0, "-------------------", "", -1, NULL},
-        //{3, is_fav ? "Retirer favoris    " : "Ajouter favoris    ", "", 1, NULL},
+        {0, "---", "", -1, NULL},
+        {3, is_fav ? "Retirer favoris    " : "Ajouter favoris    ", "", 1, NULL},
         {2, "Supprimer savegarde", "", has_save || has_sram, NULL},
         ODROID_DIALOG_CHOICE_LAST
     };
