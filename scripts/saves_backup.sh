@@ -19,7 +19,7 @@ fi
 
 mkdir -p "$OUTDIR"
 
-for emu in nes gb gg nes pce sms; do
+for emu in gb gg gw nes pce sms; do
     mkdir -p "${OUTDIR}/${emu}"
     COUNT=$(get_number_of_saves SAVE_$(echo ${emu} | awk '{print toupper($0)}')_)
     for (( i = 0; i < COUNT; i++ )); do
@@ -38,7 +38,7 @@ for emu in nes gb gg nes pce sms; do
         # openocd does not handle [ and ] well in filenames.
         image_quoted=${image//\[/\\[}
         image_quoted=${image_quoted//\]/\\]}
-        ${OPENOCD} -f ${FLSHLD_DIR}/interface_${ADAPTER}.cfg -c "init; halt; dump_image \"${image_quoted}\" ${address} ${size}; resume; exit;"
+        ${OPENOCD} -f scripts/interface_${ADAPTER}.cfg -c "init; halt; dump_image \"${image_quoted}\" ${address} ${size}; resume; exit;"
     done
 done
 

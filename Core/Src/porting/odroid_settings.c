@@ -48,7 +48,7 @@ static const persistent_config_t persistent_config_default = {
     .magic = CONFIG_MAGIC,
     .version = 1,
 
-    .backlight = ODROID_BACKLIGHT_LEVEL4,
+    .backlight = ODROID_BACKLIGHT_LEVEL6,
     .start_action = ODROID_START_ACTION_RESUME,
     .volume = ODROID_AUDIO_VOLUME_MAX / 2, // Too high volume can cause brown out if the battery isn't connected.
     .font_size = 8,
@@ -108,7 +108,7 @@ void odroid_settings_reset()
 {
     memcpy(&persistent_config_ram, &persistent_config_default, sizeof(persistent_config_t));
 
-    odroid_settings_commit();
+    // odroid_settings_commit();
 }
 
 char* odroid_settings_string_get(const char *key, const char *default_value)

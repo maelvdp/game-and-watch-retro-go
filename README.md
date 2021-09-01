@@ -6,19 +6,34 @@ Supported emulators:
 
 - ColecoVision (col)
 - Gameboy / Gameboy Color (gb/gbc)
+- Game & Watch / LCD Games (gw)
 - Nintendo Entertainment System (nes)
 - PC Engine / TurboGrafx-16 (pce)
 - Sega Game Gear (gg)
 - Sega Master System (sms)
 - Sega SG-1000 (sg)
 
-## ImgUI Branch
+## Controls
 
-<img src="assets/gwui.jpg" width="800"/>
-Need same as romname bitmap file, bmp file must 116x116 pixels and 16bit(RGB565) and flip vertical
-Bmp image file mast RGB565
-(Photoshop -> save as -> BMP file (sel:win+16bit, checked 'flip row order' option) -> Advance mode -> R5 G6 B5)
+Buttons are mapped as you would expect for each emulator. `GAME` is mapped to `START`,
+and `TIME` is mapped to `SELECT`. `PAUSE/SET` brings up the emulator menu.
 
+By default, pressing the power-button while in a game will automatically trigger
+a save-state prior to putting the system to sleep. Note that this WILL overwrite
+the previous save-state for the current game.
+
+### Macros
+
+Holding the `PAUSE/SET` button while pressing other buttons have the following actions:
+
+- `PAUSE/SET` + `TIME` = Toggle speedup between 1x and the last non-1x speed. Defaults to 1.5x.
+- `PAUSE/SET` + `UP` = Brightness up.
+- `PAUSE/SET` + `DOWN` = Brightness down.
+- `PAUSE/SET` + `RIGHT` = Volume up.
+- `PAUSE/SET` + `LEFT` = Volume down.
+- `PAUSE/SET` + `B` = Load state.
+- `PAUSE/SET` + `A` = Save state.
+- `PAUSE/SET` + `POWER` = Poweroff WITHOUT save-stating.
 
 ## How to report issues
 
@@ -60,16 +75,6 @@ Note: `make -j8` is used as an example. You may use `make -j$(nproc)` on Linux o
 # export ADAPTER=rpi
 export ADAPTER=stlink
 
-# Clone and build flashloader:
-
-git clone https://github.com/ghidraninja/game-and-watch-flashloader
-
-cd game-and-watch-flashloader
-
-make -j8
-
-cd ..
-
 # Clone this repo with submodules:
 
 git clone --recurse-submodules https://github.com/kbeckmann/game-and-watch-retro-go
@@ -89,9 +94,9 @@ python3 -m pip install -r requirements.txt
 
 # Build and program external and internal flash.
 # Notes:
-#     * If you are using the 16MB external flash, build using:
-#           make -j8 LARGE_FLASH=1 flash
-#       A custom flash size in bytes may be specified with the EXTFLASH_SIZE variable.
+#     * If you are using a modified unit with a larger external flash,
+#       set the EXTFLASH_SIZE_MB to its size in megabytes (MB) (16MB used in the example):
+#           make -j8 EXTFLASH_SIZE_MB=16 flash
 #     * If you'd like to apply more advanced experimental ROM compression, add the
 #       field COMPRESS=zopfli to the make command.
 
@@ -121,10 +126,10 @@ cd game-and-watch-retro-go
 docker build -f Dockerfile --tag kbeckmann/retro-go-builder .
 
 # Run it with usb passthrough. Set your ADAPTER and LARGE_FLASH appropriately.
-docker run --rm -it --privileged -v /dev/bus/usb:/dev/bus/usb kbeckmann/retro-go-builder make ADAPTER=stlink LARGE_FLASH=0 -j$(nproc) flash
+docker run --rm -it --privileged -v /dev/bus/usb:/dev/bus/usb kbeckmann/retro-go-builder make ADAPTER=stlink EXTFLASH_SIZE_MB=1 -j$(nproc) flash
 
 # In case you get access errors when flashing, you may run sudo inside the docker container. The proper way is to fix the udev rules, but at least this is a way forward in case you are stuck.
-# docker run --rm -it --privileged -v /dev/bus/usb:/dev/bus/usb kbeckmann/retro-go-builder sudo -E make ADAPTER=stlink LARGE_FLASH=0 -j$(nproc) flash
+# docker run --rm -it --privileged -v /dev/bus/usb:/dev/bus/usb kbeckmann/retro-go-builder sudo -E make ADAPTER=stlink EXTFLASH_SIZE_MB=1 -j$(nproc) flash
 ```
 
 ## Experimental
@@ -150,12 +155,16 @@ To use zopfli compression, make sure the python dependencies are installed
 and add `COMPRESS=zopfli` to the `make` command. For example:
 
 ```
-make -j8 LARGE_FLASH=1 COMPRESS=zopfli flash
+make -j8 EXTFLASH_SIZE_MB=16 COMPRESS=zopfli flash
 ```
+
+### Place external flash data at an offset
+
+By specifying EXTFLASH_OFFSET you may place the external flash data at an offset to allow for multi booting.
 
 ## Backing up and restoring save state files
 
-Save states can be backed up using `./scripts/saves_backup.sh build/gw_retro_go.elf`. Make sure to use the elf file that matches what is running on your device! It is a good idea to keep this elf file in case you want to back up at a later time.
+Save states can be backed up using `./scripts/saves_backup.sh build/gw_retro_go.elf`. Make sure to use the elf file that matches what is running on your device! It is a good idea to keep this elf file in case you want to back up at a later time. This can also be achieved with `make flash_saves_backup`.
 
 This downloads all save states to the local directory `./save_states`. Each save state will be located in `./save_states/<emu>/<rom name>.save`.
 
@@ -174,6 +183,38 @@ The Nintendo® Game & Watch™ comes with a 1MB external flash. This can be upgr
 The flash operates at 1.8V so make sure the one you change to also matches this.
 
 The recommended flash to upgrade to is MX25U12835FM2I-10G. It's 16MB, the commands are compatible with the stock firmware and it's also the largest flash that comes in the same package as the original.
+
+## Advanced Flash Examples
+
+### Tim's patched firmware
+In this example, we'll be compiling retro-go to be used with a 64MB (512Mb) `MX25U51245GZ4I00` flash
+chip and [tim's patched firmware](https://www.schuerewegen.tk/gnw/#win_stock_firmware_patcher).
+The internal patched stock firmware is located at `0x08000000`, which corresponds to `INTFLASH_BANK=1`.
+The internal retro-go firmware will be flashed to `0x08100000`, which corresponds to `INTFLASH_BANK=2`.
+The stock extflash firmware is `1048576` bytes long at address `0x90000000`.
+The stock extflash is taking up the first 1MB of the 64MB external flash chip, so we will set
+`EXTFLASH_SIZE_MB=63`. Since we have to flash it after the end of the stock extflash,
+we will set `EXTFLASH_OFFSET=1048576`. We can now build the firmware with the
+following command:
+
+```
+make clean
+make -j8 EXTFLASH_SIZE_MB=63 EXTFLASH_OFFSET=1048576 INTFLASH_BANK=2
+```
+
+To flash the produced binaries to your device, you have two options:
+1. Using a windows computer with [these SPI flash external loaders](https://www.schuerewegen.tk/download/STM32CubeProgrammer%20External%20Loaders%20%282021-05-02%29.zip):
+
+```
+STM32_Programmer_CLI.exe -c port=SWD -w gw_retro_go_intflash.bin 0x08100000
+STM32_Programmer_CLI.exe -c port=SWD reset=HWrst -w gw_retro_go_extflash.bin 0x90100000 -el "PATH_TO_THE_STLDR_FILE\MX25U51245G_GAME-AND-WATCH.stldr" -rst
+```
+
+2. Use a [patched version of openocd](https://github.com/kbeckmann/ubuntu-openocd-git-builder) that allows access to the undocumented flash regions of the microcontroller. For mac users, you can use [this homebrew formula](https://github.com/northskysl/homebrew-core/blob/master/Formula/open-ocd.rb):
+
+```
+make -j8 EXTFLASH_SIZE_MB=63 EXTFLASH_OFFSET=1048576 INTFLASH_BANK=2 flash
+```
 
 ## Contact, discussion
 

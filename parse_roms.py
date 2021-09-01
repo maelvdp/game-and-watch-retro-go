@@ -52,11 +52,13 @@ SAVE_SIZES = {
     "col": 60 * 1024,
     "sg": 60 * 1024,
     "pce": 76 * 1024,
+    "gw":   4 * 1024
 }
 
 
 # TODO: Find a better way to find this before building
 MAX_COMPRESSED_NES_SIZE = 0x00081000
+MAX_COMPRESSED_PCE_SIZE = 0x00049000
 
 """
 All ``compress_*`` functions must be decorated ``@COMPRESSIONS`` and have the
@@ -442,6 +444,14 @@ class ROMParser:
                 return
             compressed_data = compress(data)
             output_file.write_bytes(compressed_data)
+        elif "pce_system" in variable_name:  # PCE
+            if rom.path.stat().st_size > MAX_COMPRESSED_PCE_SIZE:
+                print(
+                    f"INFO: {rom.name} is too large to compress, skipping compression!"
+                )
+                return
+            compressed_data = compress(data)
+            output_file.write_bytes(compressed_data)
         elif "gb_system" in variable_name:  # GB/GBC
             BANK_SIZE = 16384
             banks = [data[i : i + BANK_SIZE] for i in range(0, len(data), BANK_SIZE)]
@@ -692,6 +702,7 @@ class ROMParser:
             "pce",
             ["pce"],
             "SAVE_PCE_",
+            args.compress,
         )
 
         total_save_size += save_size
@@ -699,7 +710,19 @@ class ROMParser:
         total_img_size += img_size
         build_config += "#define ENABLE_EMULATOR_PCE\n" if rom_size > 0 else ""
 
-        total_size = total_save_size + total_rom_size + total_img_size
+        save_size, rom_size = self.generate_system(
+            "Core/Src/retro-go/gw_roms.c",
+            "Game & Watch",
+            "gw_system",
+            "gw",
+            ["gw"],
+            "SAVE_GW_",
+        )
+        total_save_size += save_size
+        total_rom_size += rom_size
+        build_config += "#define ENABLE_EMULATOR_GW\n" if rom_size > 0 else ""
+
+        total_size = total_save_size + total_rom_size
 
         if total_size == 0:
             print(

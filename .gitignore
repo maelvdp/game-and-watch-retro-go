@@ -18,6 +18,7 @@ Core/Src/retro-go/gb_roms.c
 Core/Src/retro-go/gg_roms.c
 Core/Src/retro-go/nes_roms.c
 Core/Src/retro-go/pce_roms.c
+Core/Src/retro-go/gw_roms.c
 Core/Src/retro-go/sg1000_roms.c
 Core/Src/retro-go/sms_roms.c
 
@@ -29,11 +30,6 @@ save_states
 venv
 
 **/.DS_Store
-.vs/VSWorkspaceState.json
-.vs/slnx.sqlite
-.vs/ProjectSettings.json
-.vs/game-and-watch-retro-go/v16/Browse.VC.opendb
-.vs/game-and-watch-retro-go/v16/Browse.VC.db-wal
-.vs/game-and-watch-retro-go/v16/Browse.VC.db-shm
-.vs/game-and-watch-retro-go/v16/Browse.VC.db
-.vs/game-and-watch-retro-go/v16/.suo
+
+**/*.pyc
+

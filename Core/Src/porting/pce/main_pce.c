@@ -2,7 +2,9 @@
 #include <string.h>
 #include <hard_pce.h>
 #include <romdb_pce.h>
+#include "lz4_depack.h"
 #include <assert.h>
+#include "miniz.h"
 #include <gfx.h>
 #include "main.h"
 #include "bilinear.h"
@@ -21,9 +23,8 @@
 //#define XBUF_HEIGHT	(242 + 32)
 //#define GW_LCD_WIDTH  (320)
 //#define GW_LCD_HEIGHT (240)
-//#define AUDIO_SAMPLE_RATE   (22050)
 #define FB_INTERNAL_OFFSET (((XBUF_HEIGHT - current_height) / 2 + 16) * XBUF_WIDTH + (XBUF_WIDTH - current_width) / 2)
-#define AUDIO_BUFFER_LENGTH_PCE  (AUDIO_SAMPLE_RATE / 60)
+#define AUDIO_BUFFER_LENGTH_PCE  (PCE_SAMPLE_RATE / 60)
 #define JOY_A       0x01
 #define JOY_B       0x02
 #define JOY_SELECT  0x04
@@ -53,7 +54,6 @@ static short audioBuffer_pce[ AUDIO_BUFFER_LENGTH_PCE * 2];
 static uint8_t emulator_framebuffer_pce[XBUF_WIDTH * XBUF_HEIGHT];
 static uint8_t OBJ_CACHE_buf[0x10000];
 static uint8_t PCE_EXRAM_BUF[0x8000];
-static uint skipFrames = 0;
 static int framePerSecond=0;
 
 // TODO: Move to lcd.c/h
@@ -188,13 +188,63 @@ static bool LoadState(char *pathName) {
     return true;
 }
 
+size_t 
+pce_osd_getromdata(unsigned char **data)
+{
+    /* src pointer to the ROM data in the external flash (raw or LZ4) */
+    const unsigned char *src = ROM_DATA;
+    unsigned char *dest = (unsigned char *)&_PCE_ROM_UNPACK_BUFFER;
+    uint32_t available_size = (uint32_t)&_PCE_ROM_UNPACK_BUFFER_SIZE;
+
+    if (memcmp(&src[0], LZ4_MAGIC, LZ4_MAGIC_SIZE) == 0) {
+        /* dest pointer to the ROM data in the internal RAM (raw) */
+        uint32_t lz4_original_size;
+        int32_t lz4_uncompressed_size;
+
+        printf("LZ4 compressed ROM detected.\n");
+        printf("Uncompressing to %p. %ld bytes available.\n", dest, available_size);
+
+        /* get the content size to uncompress */
+        lz4_original_size = lz4_get_original_size(src);
+
+        printf("Original size is %ld\n", lz4_original_size);
+        /* Check if there is enough memory to uncompress it */
+        assert(available_size >= lz4_original_size);
+
+        /* Uncompress the content to RAM */
+        lz4_uncompressed_size = lz4_uncompress(src, dest);
+
+        printf("Uncompressed size: %ld bytes.\n", lz4_uncompressed_size);
+
+        /* Check if the uncompressed content size is as expected */
+        assert(lz4_original_size == lz4_uncompressed_size);
+
+        *data = dest;
+
+        return lz4_uncompressed_size;
+    } else if(strcmp(ROM_EXT, "zopfli") == 0) {
+        /* DEFLATE decompression */
+        printf("Zopfli compressed ROM detected.\n");
+        size_t n_decomp_bytes;
+        int flags = 0;
+        flags |= TINFL_FLAG_USING_NON_WRAPPING_OUTPUT_BUF;
+        n_decomp_bytes = tinfl_decompress_mem_to_mem(dest, available_size, src, ROM_DATA_LENGTH, flags);
+        assert(n_decomp_bytes != TINFL_DECOMPRESS_MEM_TO_MEM_FAILED);
+        *data = dest;
+        return n_decomp_bytes;
+    } else {
+        *data = (unsigned char *)ROM_DATA;
+        return ROM_DATA_LENGTH;
+    }
+}
+
 void LoadCartPCE() {
     int offset;
-    PCE.ROM = (uint8 *)ROM_DATA;
-    offset = ROM_DATA_LENGTH & 0x1fff;
-    PCE.ROM_SIZE = (ROM_DATA_LENGTH - offset) / 0x2000;
+    size_t rom_length = pce_osd_getromdata(&PCE.ROM);
+    offset = rom_length & 0x1fff;
+    PCE.ROM_SIZE = (rom_length - offset) / 0x2000;
      PCE.ROM_DATA = PCE.ROM + offset;
-       PCE.ROM_CRC = crc32_le(0, PCE.ROM, ROM_DATA_LENGTH);
+       PCE.ROM_CRC = crc32_le(0, PCE.ROM, rom_length);
        uint IDX = 0;
        uint ROM_MASK = 1;
 
@@ -202,7 +252,7 @@ void LoadCartPCE() {
        ROM_MASK--;
 
 #ifdef PCE_SHOW_DEBUG
-       printf("Rom Size: %d, B1:%X, B2:%X, B3:%X, B4:%X" , ROM_DATA_LENGTH, PCE.ROM[0], PCE.ROM[1],PCE.ROM[2],PCE.ROM[3]);
+       printf("Rom Size: %d, B1:%X, B2:%X, B3:%X, B4:%X" , rom_length, PCE.ROM[0], PCE.ROM[1],PCE.ROM[2],PCE.ROM[3]);
 #endif
 
        for (int index = 0; index < KNOWN_ROM_COUNT; index++) {
@@ -347,7 +397,7 @@ void pce_osd_gfx_blit(bool drawFrame) {
 #endif
 
     uint8_t *emuFrameBuffer = osd_gfx_framebuffer();
-    uint16_t *framebuffer_active = (active_framebuffer == 0 ? framebuffer1 : framebuffer2);
+    pixel_t *framebuffer_active = lcd_get_active_buffer();
     int x2=0,y=0, offsetY;
     int xScaleDownModulo = 0;
     int xScaleUpModulo = 0;
@@ -400,6 +450,7 @@ void pce_osd_gfx_blit(bool drawFrame) {
     odroid_overlay_draw_text(0,0, GW_LCD_WIDTH, debugMsg,  C_GW_YELLOW, C_GW_RED);
 #endif
 
+    common_ingame_overlay();
     lcd_swap();
 
     memset(emulator_framebuffer_pce,0,sizeof(emulator_framebuffer_pce));
@@ -407,8 +458,7 @@ void pce_osd_gfx_blit(bool drawFrame) {
 
 void pce_pcm_submit() {
     uint8_t volume = odroid_audio_volume_get();
-    //int32_t factor = volume_tbl[volume]  ;
-    int32_t factor = volume_tbl[volume] / 2 ;
+    int32_t factor = volume_tbl[volume] / 2; // Divide by 2 to prevent overflow in stereo mixing
     pce_snd_update(audioBuffer_pce, AUDIO_BUFFER_LENGTH_PCE );
     size_t offset = (dma_state == DMA_TRANSFER_STATE_HF) ? 0 : AUDIO_BUFFER_LENGTH_PCE;
     if (audio_mute || volume == ODROID_AUDIO_VOLUME_MIN) {
@@ -417,43 +467,30 @@ void pce_pcm_submit() {
         }
     } else {
         for (int i = 0; i < AUDIO_BUFFER_LENGTH_PCE; i++) {
+            /* mix left & right */
             int32_t sample = (audioBuffer_pce[i*2] + audioBuffer_pce[i*2+1]);
-            //int32_t sample = (audioBuffer_pce[i*2] );
             audiobuffer_dma[offset + i] = (sample * factor) >> 8;
         }
     }
-    static dma_transfer_state_t last_dma_state = DMA_TRANSFER_STATE_HF;
-    while (dma_state == last_dma_state) {
-        __NOP();
-    }
-    last_dma_state = dma_state;
 }
 
 int app_main_pce(uint8_t load_state, uint8_t start_paused) {
 
-    uint32_t pause_pressed = 0;
-    uint8_t pause_after_frames;
-    uint8_t pauseFrames = 0;
-    uint8_t frames_since_last_skip = 0;
-
     if (start_paused) {
-        pause_after_frames = 2;
+        common_emu_state.pause_after_frames = 2;
         odroid_audio_mute(true);
     } else {
-        pause_after_frames = 0;
+        common_emu_state.pause_after_frames = 0;
     }
 
-    odroid_system_init(APP_ID, AUDIO_SAMPLE_RATE);
+    odroid_system_init(APP_ID, PCE_SAMPLE_RATE);
     odroid_system_emu_init(&LoadState, &SaveState, &netplay_callback);
-    rg_app_desc_t *app = odroid_system_get_app();
     pce_log[0]=0;
 
     // Init Graphics
     init_color_pals();
     const int refresh_rate = FPS_NTSC;
     sprintf(pce_log,"%d",refresh_rate);
-    const int frameTime = 1000 / refresh_rate;
-    bool fullFrame = false;
     memset(framebuffer1, 0, sizeof(framebuffer1));
     memset(framebuffer2, 0, sizeof(framebuffer2));
     gfx_init();
@@ -475,50 +512,19 @@ int app_main_pce(uint8_t load_state, uint8_t start_paused) {
     if (load_state) LoadState(NULL);
 
     // Main emulator loop
-    uint32_t power_pressed = 0;
     printf("Main emulator loop start\n");
 
     while (true) {
         wdog_refresh();
-        bool drawFrame = !skipFrames;
-        if(drawFrame) frames_since_last_skip += 1;
-        else frames_since_last_skip = 0;
+        bool drawFrame = common_emu_frame_loop();
 
         odroid_gamepad_state_t joystick;
-
         odroid_input_read_gamepad(&joystick);
 
-        if (pause_pressed != joystick.values[ODROID_INPUT_VOLUME]) {
-            if (pause_pressed) {
-                // TODO: Sync framebuffers in a nicer way
-                lcd_sync();
-
-                odroid_dialog_choice_t options[] = {
-                    ODROID_DIALOG_CHOICE_LAST
-                };
-                odroid_overlay_game_menu(options);
-                memset(framebuffer1, 0x0, sizeof(framebuffer1));
-                memset(framebuffer2, 0x0, sizeof(framebuffer2));
-            }
-            pause_pressed = joystick.values[ODROID_INPUT_VOLUME];
-        }
-
-        uint startTime = get_elapsed_time();
-
-        if (power_pressed != joystick.values[ODROID_INPUT_POWER]) {
-            printf("Power toggle %ld=>%d\n", power_pressed, !power_pressed);
-            power_pressed = joystick.values[ODROID_INPUT_POWER];
-            if (power_pressed) {
-                printf("Power PRESSED %ld\n", power_pressed);
-                HAL_SAI_DMAStop(&hsai_BlockA1);
-                if(!joystick.values[ODROID_INPUT_VOLUME]) {
-                    // Always save as long as PAUSE is not pressed
-                    SaveState(NULL);
-                }
-
-                odroid_system_sleep();
-            }
-        }
+        odroid_dialog_choice_t options[] = {
+            ODROID_DIALOG_CHOICE_LAST
+        };
+        common_emu_input_loop(&joystick, options);
 
         pce_input_read(&joystick);
 
@@ -530,56 +536,21 @@ int app_main_pce(uint8_t load_state, uint8_t start_paused) {
         }
 
         pce_osd_gfx_blit(drawFrame);
+        if(drawFrame) pce_pcm_submit();
 
-        // See if we need to skip a frame to keep up
-        if (skipFrames == 0) {
-            if (get_elapsed_time_since(startTime) > frameTime) skipFrames = 1;
-            switch(app->speedupEnabled){
-                case SPEEDUP_0_5x:
-                    pauseFrames++;
-                    break;
-                case SPEEDUP_0_75x:
-                    if(frames_since_last_skip % 4 == 0) pauseFrames++;
-                    break;
-                case SPEEDUP_1_25x:
-                    if(frames_since_last_skip % 4 == 0) skipFrames++;
-                    break;
-                case SPEEDUP_1_5x:
-                    if(frames_since_last_skip % 2 == 0) skipFrames++;
-                    break;
-                case SPEEDUP_2x:
-                    skipFrames++;
-                    break;
-                case SPEEDUP_3x:
-                    skipFrames+=2;
-                    break;
+        if(!common_emu_state.skip_frames){
+            dma_transfer_state_t last_dma_state = DMA_TRANSFER_STATE_HF;
+            for(uint8_t p = 0; p < common_emu_state.pause_frames + 1; p++) {
+                while (dma_state == last_dma_state) {
+                    cpumon_sleep();
+                }
+                last_dma_state = dma_state;
             }
-        } else if (skipFrames > 0) {
-            skipFrames--;
-        }
-
-        // Tick before submitting audio/syncing
-        odroid_system_tick(!drawFrame, fullFrame, get_elapsed_time_since(startTime));
-
-        if (drawFrame) {
-            for(uint8_t p = 0; p < pauseFrames + 1; p++) {
-                pce_pcm_submit();
-            }
-            pauseFrames = 0;
         }
 
         // Prevent overflow
         int trim = MIN(Cycles, PCE.MaxCycles);
         PCE.MaxCycles -= trim;
         Cycles -= trim;
-
-        // Render frames before faking a pause button press
-        if (pause_after_frames > 0) {
-            pause_after_frames--;
-            if (pause_after_frames == 0) {
-                pause_pressed = B_PAUSE;
-            }
-        }
     }
-
 }

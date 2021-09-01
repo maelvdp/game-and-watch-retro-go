@@ -12,17 +12,29 @@ CHECK_DIRTY_SUBMODULE ?= 1
 # Set to 0 to skip tools check
 CHECK_TOOLS ?= 1
 
-# Set to 1 to enable 16MB external flash support
+# Set to 1 to enable 16MB external flash support. (deprecated, use EXTFLASH_SIZE_MB instead!)
 LARGE_FLASH ?= 0
 
-# User may override external flash size by setting EXTFLASH_SIZE
+# Configure where data is stored in the external flash by
+# setting EXTFLASH_OFFSET. Useful if the first 1MB are to be preserved.
+EXTFLASH_OFFSET ?= 0
+
+# Configure external flash size by setting EXTFLASH_SIZE
 ifeq ($(LARGE_FLASH),1)
 	# 16MB
-	EXTFLASH_SIZE ?= 16777216
+	EXTFLASH_SIZE_MB ?= 16
 else
 	# 1MB
-	EXTFLASH_SIZE ?= 1048576
+	EXTFLASH_SIZE_MB ?= 1
 endif
+
+# Configure external flash size in MB (Megabytes)
+EXTFLASH_SIZE_MB ?= 1
+INTFLASH_BANK ?= 1
+
+EXTFLASH_SIZE ?= $(shell echo "$$(( $(EXTFLASH_SIZE_MB) * 1024 * 1024 ))")
+
+EXTFLASH_FORCE_SPI ?= 0
 
 # Compress supported ROMs by default. Set to 0 to disable.
 COMPRESS ?= lz4
@@ -35,6 +47,8 @@ endif
 RESET_DBGMCU ?= 1
 ifeq ($(RESET_DBGMCU),1)
 	RESET_DBGMCU_CMD = $(MAKE) reset_dbgmcu
+else
+	RESET_DBGMCU_CMD = $(MAKE) reset_mcu
 endif
 
 PYTHON3 ?= /usr/bin/env python3
@@ -53,6 +67,7 @@ retro-go-stm32/components/lupng/miniz.c \
 retro-go-stm32/retro-go/main/gui.c \
 Core/Src/porting/gw_alloc.c \
 Core/Src/retro-go/rg_main.c \
+Core/Src/retro-go/rg_rtc.c \
 Core/Src/retro-go/rg_emulators.c \
 Core/Src/retro-go/rom_manager.c \
 Core/Src/porting/odroid_settings.c \
@@ -64,14 +79,15 @@ Core/Src/retro-go/bitmaps/header_gg.c \
 Core/Src/retro-go/bitmaps/header_col.c \
 Core/Src/retro-go/bitmaps/header_sg1000.c \
 Core/Src/retro-go/bitmaps/header_pce.c \
+Core/Src/retro-go/bitmaps/header_gw.c \
 Core/Src/retro-go/bitmaps/logo_gb.c \
 Core/Src/retro-go/bitmaps/logo_nes.c \
 Core/Src/retro-go/bitmaps/logo_sms.c \
 Core/Src/retro-go/bitmaps/logo_gg.c \
 Core/Src/retro-go/bitmaps/logo_col.c \
 Core/Src/retro-go/bitmaps/logo_sg1000.c \
-Core/Src/retro-go/bitmaps/logo_pce.c
-
+Core/Src/retro-go/bitmaps/logo_pce.c \
+Core/Src/retro-go/bitmaps/logo_gw.c
 
 # Version and URL for the STM32CubeH7 SDK
 SDK_VERSION ?= v1.8.0
@@ -219,6 +235,8 @@ AS_DEFS +=
 
 # C defines
 C_DEFS +=  \
+-DINTFLASH_BANK=$(INTFLASH_BANK) \
+-DEXTFLASH_FORCE_SPI=$(EXTFLASH_FORCE_SPI) \
 -DUSE_HAL_DRIVER \
 -DSTM32H7B0xx \
 -DVECT_TAB_ITCM \
@@ -237,6 +255,7 @@ C_INCLUDES +=  \
 -ICore/Inc/porting/nes \
 -ICore/Inc/porting/smsplusgx \
 -ICore/Inc/porting/pce \
+-ICore/Inc/porting/gw \
 -ICore/Inc/retro-go \
 -IDrivers/STM32H7xx_HAL_Driver/Inc \
 -IDrivers/STM32H7xx_HAL_Driver/Inc/Legacy \
@@ -246,7 +265,7 @@ C_INCLUDES +=  \
 -Iretro-go-stm32/components/lupng \
 
 # Force include the configuration
-CFLAGS += -include $(BUILD_DIR)/config.h
+CFLAGS += $(CFLAGS_EXTRA) -include $(BUILD_DIR)/config.h
 
 # compile gcc flags
 ASFLAGS += $(MCU) $(AS_DEFS) $(AS_INCLUDES) $(OPT) -Wall -fdata-sections -ffunction-sections
@@ -262,7 +281,16 @@ CFLAGS += -fstack-usage -Wstack-usage=20480
 # Generate dependency information
 CFLAGS += -MMD -MP -MF"$(@:%.o=%.d)"
 
+LDFLAGS += -Wl,--defsym=__EXTFLASH_OFFSET__=$(EXTFLASH_OFFSET)
 LDFLAGS += -Wl,--defsym=__EXTFLASH_TOTAL_LENGTH__=$(EXTFLASH_SIZE)
+
+ifeq ($(INTFLASH_BANK), 1)
+	INTFLASH_ADDRESS = 0x08000000
+else ifeq ($(INTFLASH_BANK), 2)
+	INTFLASH_ADDRESS = 0x08100000
+endif
+
+LDFLAGS += -Wl,--defsym=__INTFLASH__=$(INTFLASH_ADDRESS)
 
 #######################################
 # LDFLAGS
@@ -287,8 +315,9 @@ GNUBOY_OBJECTS = $(addprefix $(BUILD_DIR)/gnuboy/,$(notdir $(GNUBOY_C_SOURCES:.c
 NES_OBJECTS = $(addprefix $(BUILD_DIR)/nes/,$(notdir $(NES_C_SOURCES:.c=.o)))
 SMSPLUSGX_OBJECTS = $(addprefix $(BUILD_DIR)/smsplusgx/,$(notdir $(SMSPLUSGX_C_SOURCES:.c=.o)))
 PCE_OBJECTS = $(addprefix $(BUILD_DIR)/pce/,$(notdir $(PCE_C_SOURCES:.c=.o)))
+GW_OBJECTS = $(addprefix $(BUILD_DIR)/gw/,$(notdir $(GW_C_SOURCES:.c=.o)))
 
-vpath %.c $(sort $(dir $(C_SOURCES) $(NES_C_SOURCES) $(GNUBOY_C_SOURCES) $(SMSPLUSGX_C_SOURCES) $(PCE_C_SOURCES) $(SDK_C_SOURCES)))
+vpath %.c $(sort $(dir $(C_SOURCES) $(NES_C_SOURCES) $(GNUBOY_C_SOURCES) $(SMSPLUSGX_C_SOURCES) $(PCE_C_SOURCES) $(GW_C_SOURCES) $(SDK_C_SOURCES)))
 # list of ASM program objects
 OBJECTS += $(addprefix $(BUILD_DIR)/,$(notdir $(SDK_ASM_SOURCES:.s=.o)))
 vpath %.s $(sort $(dir $(SDK_ASM_SOURCES)))
@@ -313,7 +342,7 @@ Core/Inc/githash.h: FORCE | $(BUILD_DIR)
 # Run parse_roms.py to generate information about the roms
 $(BUILD_DIR)/rom_files.txt: FORCE | $(BUILD_DIR)
 	$(V)$(ECHO) [ BASH ] Checking for updated roms
-	$(V)./scripts/update_rom_files.sh build/rom_files.txt roms/gb roms/nes roms/sms roms/gg roms/col roms/pce roms/sg
+	$(V)./scripts/update_rom_files.sh build/rom_files.txt roms/gb roms/nes roms/sms roms/gg roms/col roms/pce roms/sg roms/gw
 
 $(BUILD_DIR)/roms.a: $(BUILD_DIR)/rom_files.txt parse_roms.py
 	$(V)$(ECHO) [ PYTHON3 ] $(notdir $<)
@@ -342,6 +371,17 @@ endif
 
 ifeq (${CHECK_TOOLS},1)
 CheckTools:
+	@# Check that the tools in the toolchain exist
+	$(V)/usr/bin/env bash -c " \
+		for tool in $(CC) $(CP) $(SZ) $(GDB) $(DUMP); do \
+		which \$$tool 2> /dev/null > /dev/null || \
+		( \
+			echo -e \"\nCannot find \$$tool\n\" && \
+			exit 1 \
+		) \
+		done"
+
+	@# Check that GCC version 10 or 11 is used
 	$(V)$(CC) -v 2>&1 | grep "gcc version 1[01]" > /dev/null || \
 		( \
 			echo -e "\n\n\nPlease use GCC version 10\n\n\nYou are using:" && \
@@ -352,13 +392,13 @@ CheckTools:
 
 	$(V)$(CP) --info | grep "elf32-littlearm" > /dev/null || \
 		( \
-			echo -e "\n\n\nobjcopy seems to be missing or not suport elf32-littlearm. Please install binutils.\n\n\n" && \
+			echo -e "\n\n\n$(CP) does not suport elf32-littlearm.\nPlease install a toolchain that supports elf32-littlearm and armv7e-m.\n\n\n" && \
 			exit 1 \
 		)
 
 	$(V)$(DUMP) --help | grep "armv7e-m" > /dev/null || \
 		( \
-			echo -e "\n\n\nobjdump seems to be missing or not suport armv7e-m. Please install binutils.\n\n\n" && \
+			echo -e "\n\n\nobjdump does not suport armv7e-m.\nPlease install a toolchain that supports elf32-littlearm and armv7e-m.\n\n\n" && \
 			exit 1 \
 		)
 
@@ -371,9 +411,9 @@ $(BUILD_DIR)/%.o: %.s Makefile.common Makefile $(BUILD_DIR)/config.h | $(BUILD_D
 	$(V)$(ECHO) [ AS ] $(notdir $<)
 	$(V)$(AS) -c $(CFLAGS) $< -o $@
 
-$(BUILD_DIR)/$(TARGET).elf: CheckTools $(OBJECTS) $(NES_OBJECTS) $(GNUBOY_OBJECTS) $(SMSPLUSGX_OBJECTS) $(PCE_OBJECTS) Makefile.common Makefile $(LDSCRIPT)
+$(BUILD_DIR)/$(TARGET).elf: CheckTools $(OBJECTS) $(NES_OBJECTS) $(GNUBOY_OBJECTS) $(SMSPLUSGX_OBJECTS) $(PCE_OBJECTS) $(GW_OBJECTS) Makefile.common Makefile $(LDSCRIPT)
 	$(V)$(ECHO) [ LD ] $(notdir $@)
-	$(V)$(CC) $(OBJECTS) $(NES_OBJECTS) $(GNUBOY_OBJECTS) $(SMSPLUSGX_OBJECTS) $(PCE_OBJECTS) $(LDFLAGS) -o $@
+	$(V)$(CC) $(OBJECTS) $(NES_OBJECTS) $(GNUBOY_OBJECTS) $(SMSPLUSGX_OBJECTS) $(PCE_OBJECTS) $(GW_OBJECTS) $(LDFLAGS) -o $@
 	$(V)$(SZ) $@
 	$(V)./scripts/size.sh $@
 
@@ -396,7 +436,11 @@ $(BUILD_DIR)/smsplusgx/%.o: %.c Makefile Makefile.common $(SDK_HEADERS) $(BUILD_
 $(BUILD_DIR)/pce/%.o: %.c Makefile Makefile.common $(SDK_HEADERS) $(BUILD_DIR)/config.h | $(BUILD_DIR) CheckDirtySubmodules
 	$(V)$(ECHO) [ CC pce ] $(notdir $<)
 	$(V)$(CC) -c $(CFLAGS) -Wa,-a,-ad,-alms=$(BUILD_DIR)/pce/$(notdir $(<:.c=.lst)) $< -o $@
-	
+
+$(BUILD_DIR)/gw/%.o: %.c Makefile Makefile.common $(SDK_HEADERS) $(BUILD_DIR)/config.h | $(BUILD_DIR) CheckDirtySubmodules
+	$(V)$(ECHO) [ CC gw ] $(notdir $<)
+	$(V)$(CC) -c $(CFLAGS) -Wa,-a,-ad,-alms=$(BUILD_DIR)/gw/$(notdir $(<:.c=.lst)) $< -o $@
+
 $(BUILD_DIR):
 	$(V)mkdir $@
 	$(V)mkdir $@/core
@@ -404,6 +448,7 @@ $(BUILD_DIR):
 	$(V)mkdir $@/gnuboy
 	$(V)mkdir $@/smsplusgx
 	$(V)mkdir $@/pce
+	$(V)mkdir $@/gw
 
 #######################################
 # Flashing
@@ -411,34 +456,82 @@ $(BUILD_DIR):
 
 OPENOCD ?= openocd
 ADAPTER ?= stlink
-FLSHLD_DIR ?= ../game-and-watch-flashloader
-FLASHLOADER ?= $(FLSHLD_DIR)/flash_multi.sh
+FLASHAPP ?= scripts/flash_multi.sh
+FLASHTEST ?= scripts/flashapp.sh --test
 
 # Starts openocd and attaches to the target. To be used with 'flash_intflash_nc' and 'gdb'
 openocd:
-	$(OPENOCD) -f $(FLSHLD_DIR)/interface_$(ADAPTER).cfg -c "init; halt"
+	$(OPENOCD) -f scripts/interface_$(ADAPTER).cfg -c "init; halt"
 .PHONY: openocd
+
+reset:
+	$(OPENOCD) -f scripts/interface_$(ADAPTER).cfg -c "init; reset; exit"
+.PHONY: reset
+
+erase_intflash_1:
+	$(OPENOCD) -f scripts/interface_$(ADAPTER).cfg -c "init; halt; flash erase_address 0x08000000 131072; resume; exit"
+.PHONY: erase_intflash1
+
+erase_intflash_2:
+	$(OPENOCD) -f scripts/interface_$(ADAPTER).cfg -c "init; halt; flash erase_address 0x08100000 131072; resume; exit"
+.PHONY: erase_intflash2
+
+start_bank_1:
+	$(OPENOCD) -f scripts/interface_$(ADAPTER).cfg \
+		-c 'init; reset halt' \
+		-c 'set MSP 0x[string range [mdw 0x08000000] 12 19]' \
+		-c 'set PC 0x[string range [mdw 0x08000004] 12 19]' \
+		-c 'echo "Setting MSP -> $$MSP"' \
+		-c 'echo "Setting PC -> $$PC"' \
+		-c 'reg msp $$MSP' \
+		-c 'reg pc $$PC' \
+		-c 'resume;exit'
+.PHONY: start_bank_1
+
+start_bank_2:
+	$(OPENOCD) -f scripts/interface_$(ADAPTER).cfg \
+		-c 'init; reset halt' \
+		-c 'set MSP 0x[string range [mdw 0x08100000] 12 19]' \
+		-c 'set PC 0x[string range [mdw 0x08100004] 12 19]' \
+		-c 'echo "Setting MSP -> $$MSP"' \
+		-c 'echo "Setting PC -> $$PC"' \
+		-c 'reg msp $$MSP' \
+		-c 'reg pc $$PC' \
+		-c 'resume;exit'
+.PHONY: start_bank_2
 
 # Programs the internal flash using a new OpenOCD instance
 flash_intflash: $(BUILD_DIR)/$(TARGET)_intflash.bin
-	$(OPENOCD) -f $(FLSHLD_DIR)/interface_$(ADAPTER).cfg -c "program $< 0x08000000 verify reset exit"
+	$(OPENOCD) -f scripts/interface_$(ADAPTER).cfg -c "program $< $(INTFLASH_ADDRESS) verify reset exit"
 .PHONY: flash_intflash
 
 # Flashes using an existing openocd instance
 flash_intflash_nc: $(BUILD_DIR)/$(TARGET)_intflash.bin
-	echo "program $< 0x08000000 verify reset" | nc -c localhost 4444
+	echo "program $< $(INTFLASH_ADDRESS) verify reset" | nc -c localhost 4444
 .PHONY: flashx
 
 flash_extflash: $(BUILD_DIR)/$(TARGET)_extflash.bin
-	$(FLASHLOADER) $(BUILD_DIR)/$(TARGET)_extflash.bin
+	$(FLASHAPP) $(BUILD_DIR)/$(TARGET)_extflash.bin $(EXTFLASH_OFFSET)
 .PHONY: flash_extflash
+
+flash_test: flash_intflash
+	$(FLASHTEST)
+.PHONY: flash_test
 
 # Programs both the external and internal flash.
 flash:
-	$(V)$(MAKE) flash_extflash
 	$(V)$(MAKE) flash_intflash
+	$(V)$(MAKE) flash_extflash
 	$(V)$(RESET_DBGMCU_CMD)
 .PHONY: flash
+
+monitor:
+	$(V)$(PYTHON3) tools/logpoll.py
+.PHONY: monitor
+
+flash-monitor: flash
+	$(V)$(MAKE) monitor
+.PHONY: flash-monitor
 
 # Alias for flash
 flash_all: flash
@@ -460,13 +553,62 @@ flash_saves_erase: $(BUILD_DIR)/$(TARGET).elf
 
 reset_dbgmcu:
 	# Reset the DBGMCU configuration register (DBGMCU_CR)
-	$(V)$(OPENOCD) -f $(FLSHLD_DIR)/interface_$(ADAPTER).cfg -c "init; halt; mww 0x5C001004 0x00000000; resume; exit;"
+	$(V)$(OPENOCD) -f scripts/interface_$(ADAPTER).cfg -c "init; reset halt; mww 0x5C001004 0x00000000; resume; exit;"
 .PHONY: reset_dbgmcu
+
+reset_mcu:
+	$(V)$(OPENOCD) -f scripts/interface_$(ADAPTER).cfg -c "init; reset run; exit;" 2> $(BUILD_DIR)/openocd.log
+.PHONY: reset_mcu
 
 gdb: $(BUILD_DIR)/$(TARGET).elf
 	$(GDB) $< -ex "target extended-remote :3333"
 .PHONY: gdb
 
+# Flashes intflash *only* and launches gdb afterwards
+gdb_intflash: flash_intflash_nc gdb
+.PHONY: gdb_intflash
+
+dump_logs: $(BUILD_DIR)/$(TARGET).elf
+	$(V)./scripts/dump_logs.sh
+.PHONY: dump_logs
+
+help:
+	@echo "Game and Watch Retro Go"
+	@echo ""
+	@echo "Configuration variables:"
+	@echo "  EXTFLASH_FORCE_SPI  - Forces the use of legacy SPI mode for the external flash driver"
+	@echo "  EXTFLASH_SIZE_MB    - Sets the external flash size in MB"
+	@echo "  EXTFLASH_SIZE       - Sets the external flash size in bytes (deprecated)"
+	@echo "  LARGE_FLASH         - Sets the external flash size to 16MB  (deprecated)"
+	@echo "  EXTFLASH_OFFSET     - Places the data at an offset in the external flash (useful for dual boot)"
+	@echo "  INTFLASH_BANK       - Sets the internal flash bank. Valid values {1,2} (default=1)."
+	@echo "  RESET_DBGMCU        - Configures if DBGMCU should be reset after flashing."
+	@echo "                        Set to 0 to disable power saving (default=1)"
+	@echo ""
+	@echo "Current configuration:"
+	@echo "  EXTFLASH_FORCE_SPI=$(EXTFLASH_FORCE_SPI)"
+	@echo "  EXTFLASH_SIZE_MB=$(EXTFLASH_SIZE_MB)"
+	@echo "  EXTFLASH_SIZE=$(EXTFLASH_SIZE)"
+	@echo "  LARGE_FLASH=$(LARGE_FLASH)"
+	@echo "  EXTFLASH_OFFSET=$(EXTFLASH_OFFSET)"
+	@echo "  INTFLASH_BANK=$(INTFLASH_BANK)"
+	@echo "  RESET_DBGMCU=$(RESET_DBGMCU)"
+	@echo "  GCC_PATH=$(GCC_PATH)"
+	@echo "  PREFIX=$(PREFIX)"
+	@echo ""
+	@echo "Targets:"
+	@echo "  flash_extflash    - Only programs the external flash"
+	@echo "  flash_intflash    - Only programs the internal flash"
+	@echo "  flash_intflash_nc - Only programs the internal flash and uses an existing openocd server"
+	@echo "  flash_test        - Runs a flash test. Will overwrite data on the external flash!"
+	@echo "  gdb               - Starts gdb and attaches to openocd"
+	@echo "  gdb_intflash      - Runs flash_intflash_nc, then starts gdb and attaches to openocd"
+	@echo "  openocd           - Starts openocd with appropriate config"
+	@echo "  reset_dbgmcu      - Resets the unit and turns off DBGMCU (lowers battery drain)"
+	@echo "  reset_mcu         - Resets the unit"
+	@echo "  dump_logs         - Dumps the callstack and logbuf. Starts openocd and gdb under the hood."
+	@echo ""
+.PHONY: help
 
 #######################################
 # download SDK files

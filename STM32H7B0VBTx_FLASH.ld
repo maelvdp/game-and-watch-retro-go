@@ -72,7 +72,10 @@ __RAM_EMU_LENGTH__  = 1024K - __RAM_UC_LENGTH__ - __RAM_CORE_LENGTH__;
 __AHBRAM_LENGTH__   = 128K;
 __FLASH_LENGTH__    = 128K;
 
-__EXTFLASH_START__  = 0x90000000;
+__EXTFLASH_TOTAL_LENGTH__ = DEFINED(__EXTFLASH_TOTAL_LENGTH__) ? __EXTFLASH_TOTAL_LENGTH__ : 1024K;
+__EXTFLASH_OFFSET__ = DEFINED(__EXTFLASH_OFFSET__) ? __EXTFLASH_OFFSET__ : 0;
+__EXTFLASH_BASE__ = 0x90000000;  /* Beginning of addressable extflash addresses */
+__EXTFLASH_START__ = __EXTFLASH_BASE__ + __EXTFLASH_OFFSET__;  /* Beginning of where we're going to store emulator and rom data */
 
 __RAM_START__       = 0x24000000;
 __RAM_UC_START__    = __RAM_START__;
@@ -87,11 +90,38 @@ INCLUDE build/saveflash.ld
 /* saveflash.ld sets __SAVEFLASH_LENGTH__ */
 __CONFIGFLASH_LENGTH__ = 4096;
 
-__EXTFLASH_LENGTH__ = DEFINED(__EXTFLASH_TOTAL_LENGTH__) ? __EXTFLASH_TOTAL_LENGTH__ - (__CONFIGFLASH_LENGTH__ + __SAVEFLASH_LENGTH__) : 1024K - (__CONFIGFLASH_LENGTH__ + __SAVEFLASH_LENGTH__);
-__SAVEFLASH_START__ = __EXTFLASH_START__ + __EXTFLASH_LENGTH__;
+/****
+ * External Flash Layout
+ *
+ * 0x90000000 +----------------------------------+  __EXTFLASH_BASE__
+ *            |                                  |
+ *            |        Untouched data if         |
+ *            | __EXTFLASH_OFFSET__ is specified |
+ *            |                                  |
+ *            +----------------------------------+  __EXTFLASH_START__
+ *            |                                  |
+ *            |   Executable emulator data and   |
+ *            |         constant ROM data        |
+ *            |                                  |
+ *            +----------------------------------+  __EXTFLASH_END__  __SAVEFLASH_START__
+ *            |                                  |
+ *            |          Save States             |
+ *            |                                  |
+ *            +----------------------------------+  __SAVEFLASH_END__  __CONFIGFLASH_START__
+ *            |                                  |
+ *            |    Store changable persistent    |
+ *            |      retro-go configurations     |
+ *            |                                  |
+ *            +----------------------------------+  __CONFIGFLASH_END__
+ */
+__EXTFLASH_LENGTH__ = __EXTFLASH_TOTAL_LENGTH__ - (__CONFIGFLASH_LENGTH__ + __SAVEFLASH_LENGTH__);
+__EXTFLASH_END__ = __EXTFLASH_START__ + __EXTFLASH_LENGTH__;
+__SAVEFLASH_START__ = __EXTFLASH_END__;
 __SAVEFLASH_END__   = __SAVEFLASH_START__ + __SAVEFLASH_LENGTH__;
-__CONFIGFLASH_START__ = __SAVEFLASH_START__ + __SAVEFLASH_LENGTH__;
+__CONFIGFLASH_START__ = __SAVEFLASH_END__;
 __CONFIGFLASH_END__   = __CONFIGFLASH_START__ + __CONFIGFLASH_LENGTH__;
+
+__INTFLASH__ = DEFINED(__INTFLASH__) ? __INTFLASH__ : 0x08000000;
 
 /* Specify the memory areas */
 MEMORY
@@ -106,7 +136,7 @@ MEMORY
   AHBRAM   (xrw) : ORIGIN = 0x30000000, LENGTH =  __AHBRAM_LENGTH__
 
   /* FLASH */
-  FLASH    (xr ) : ORIGIN = 0x08000000,          LENGTH =  __FLASH_LENGTH__
+  FLASH    (xr ) : ORIGIN = __INTFLASH__,          LENGTH =  __FLASH_LENGTH__
   EXTFLASH (xr ) : ORIGIN = __EXTFLASH_START__,  LENGTH = __EXTFLASH_LENGTH__
   SAVEFLASH(xr ) : ORIGIN = __SAVEFLASH_START__, LENGTH = __SAVEFLASH_LENGTH__
   CONFIGFLASH(xr ) : ORIGIN = __CONFIGFLASH_START__, LENGTH = __CONFIGFLASH_LENGTH__
@@ -145,7 +175,8 @@ SECTIONS
   {
     __ram_uc_start__ = .;
     . = ALIGN(4);
-    *(.lcd)
+    *(.lcd1)
+    *(.lcd2)
     __ram_uc_end__ = .;
   } > RAM_UC
 
@@ -262,7 +293,7 @@ SECTIONS
     ASSERT(ABSOLUTE(_OVERLAY_SMS_BSS_END) < __RAM_EMU_END__, "Error: SMS BSS overflow");
   }
   _OVERLAY_SMS_BSS_SIZE = SIZEOF(.overlay_sms_bss);
-  
+
    .overlay_pce __RAM_EMU_START__ : {
       . = ALIGN(4);
     __ram_emu_pce_start__ = .;
@@ -279,11 +310,38 @@ SECTIONS
     build/pce/*.o (.bss .bss*)
     . = ALIGN(4);
     build/pce/*.o (COMMON)
+    . = ALIGN(4);
+    _PCE_ROM_UNPACK_BUFFER = .;
+    _OVERLAY_PCE_BSS_END = .;
     __ram_emu_pce_end__ = .;
     _OVERLAY_PCE_BSS_END = .;
     ASSERT(ABSOLUTE(_OVERLAY_PCE_BSS_END) < __RAM_EMU_END__, "Error: PCE BSS overflow");
   }
   _OVERLAY_PCE_BSS_SIZE = SIZEOF(.overlay_pce_bss);
+  _PCE_ROM_UNPACK_BUFFER_SIZE = __RAM_EMU_START__ + __RAM_EMU_LENGTH__ - _PCE_ROM_UNPACK_BUFFER;
+
+  .overlay_gw __RAM_EMU_START__ : {
+    . = ALIGN(4);
+    __ram_emu_gw_start__ = .;
+    build/gw/*.o (.data. data* .text .text* .rodata .rodata*)
+    . = ALIGN(4);
+    _OVERLAY_GW_LOAD_END = .;
+  } AT> EXTFLASH
+  _OVERLAY_GW_LOAD_START = LOADADDR(.overlay_gw);
+  _OVERLAY_GW_SIZE = SIZEOF(.overlay_gw);
+
+  .overlay_gw_bss _OVERLAY_GW_LOAD_END : {
+    . = ALIGN(4);
+    _OVERLAY_GW_BSS_START = .;
+    build/gw/*.o (.bss .bss*)
+    . = ALIGN(4);
+    build/gw/*.o (COMMON)
+    __ram_emu_gw_end__ = .;
+    _OVERLAY_GW_BSS_END = .;
+    ASSERT(ABSOLUTE(_OVERLAY_GW_BSS_END) < __RAM_EMU_END__, "Error: GW BSS overflow");
+  }
+  _OVERLAY_GW_BSS_SIZE = SIZEOF(.overlay_gw_bss);
+
 
   /* Place this symbol after the last overlay definition */
   .overlay_end : {
@@ -394,7 +452,7 @@ SECTIONS
   _sidata = LOADADDR(.data);
 
   /* Initialized data sections goes into RAM, load LMA copy after code */
-  .data : 
+  .data :
   {
     __dtcram_start__ = .;
 
@@ -412,7 +470,7 @@ SECTIONS
     . = ALIGN(4);
     __flash_end__ = .;
   }
-  
+
   /* Uninitialized data section */
   . = ALIGN(4);
   .bss :

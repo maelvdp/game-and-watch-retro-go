@@ -239,7 +239,7 @@ static void sms_draw_frame()
 
   uint32_t currentTime = HAL_GetTick();
   uint32_t delta = currentTime - lastFPSTime;
-  uint16_t* curr_framebuffer = NULL;
+  pixel_t* curr_framebuffer = NULL;
 
   frames++;
 
@@ -258,18 +258,15 @@ static void sms_draw_frame()
                           ((0b0000000000011111 & p));
   }
 
-  curr_framebuffer = (active_framebuffer == 0 ? framebuffer1 : framebuffer2);
-  active_framebuffer ^= 1; // swap framebuffers
-
+  curr_framebuffer = lcd_get_active_buffer();
   if (sms.console == CONSOLE_GG)     blit_gg(&bitmap, curr_framebuffer);
   else                               blit_sms(&bitmap, curr_framebuffer);
-
-  HAL_LTDC_Reload(&hltdc, LTDC_RELOAD_VERTICAL_BLANKING);
+  common_ingame_overlay();
+  lcd_swap();
 }
 
 static void sms_update_keys( odroid_gamepad_state_t* joystick )
 {
-  static uint32_t power_pressed = 0;
   uint8 k = 0;
 
   input.pad[0] = 0x00;
@@ -315,43 +312,21 @@ static void sms_update_keys( odroid_gamepad_state_t* joystick )
       if (joystick->values[ODROID_INPUT_SELECT]) input.system |= INPUT_PAUSE;
       if (joystick->values[ODROID_INPUT_START])  input.system |= INPUT_START;
   }
-
-  if (power_pressed != joystick->values[ODROID_INPUT_POWER]) {
-    power_pressed = joystick->values[ODROID_INPUT_POWER];
-    if (power_pressed) {
-        HAL_SAI_DMAStop(&hsai_BlockA1);
-        if(!joystick->values[ODROID_INPUT_VOLUME]) {
-            // Always save as long as PAUSE is not pressed
-            SaveState(NULL);
-        }
-
-        odroid_system_sleep();
-    }
-  }
 }
 
 
 int
 app_main_smsplusgx(uint8_t load_state, uint8_t start_paused, uint8_t is_coleco)
 {
-    uint32_t pause_pressed = 0;
-    uint32_t skipFrames = 0;
-    uint8_t pause_after_frames;
-    uint8_t frames_since_last_skip = 0;
-    uint8_t pauseFrames = 0;
-
     if (start_paused) {
-        pause_after_frames = 2;
+        common_emu_state.pause_after_frames = 2;
         odroid_audio_mute(true);
     } else {
-        pause_after_frames = 0;
+        common_emu_state.pause_after_frames = 0;
     }
 
     odroid_system_init(APP_ID, AUDIO_SAMPLE_RATE);
     odroid_system_emu_init(&LoadState, &SaveState, &netplay_callback);
-
-    // Load ROM
-    rg_app_desc_t *app = odroid_system_get_app();
 
     system_reset_config();
     load_rom_from_flash( is_coleco );
@@ -387,9 +362,12 @@ app_main_smsplusgx(uint8_t load_state, uint8_t start_paused, uint8_t is_coleco)
     consoleIsCOL = sms.console == CONSOLE_COLECO;
     consoleIsSG  = sms.console == CONSOLE_SG1000;
 
-    const int refresh_rate = (sms.display == DISPLAY_NTSC) ? FPS_NTSC : FPS_PAL;
-    const int frameTime = get_frame_time(refresh_rate);
-    bool fullFrame = false;
+    if (sms.display == DISPLAY_NTSC) {
+        common_emu_state.frame_time_10us = (uint16_t)(100000 / FPS_NTSC + 0.5f);
+    }
+    else {
+        common_emu_state.frame_time_10us = (uint16_t)(100000 / FPS_PAL + 0.5f);
+    }
 
     // Video
     memset(framebuffer1, 0, sizeof(framebuffer1));
@@ -403,86 +381,30 @@ app_main_smsplusgx(uint8_t load_state, uint8_t start_paused, uint8_t is_coleco)
 
         odroid_gamepad_state_t joystick;
         odroid_input_read_gamepad(&joystick);
+        odroid_dialog_choice_t options[] = {
+            ODROID_DIALOG_CHOICE_LAST
+        };
+        common_emu_input_loop(&joystick, options);
 
-        if (pause_pressed != joystick.values[ODROID_INPUT_VOLUME]) {
-            if (pause_pressed) {
-
-                // TODO: Sync framebuffers in a nicer way
-                lcd_sync();
-
-                odroid_dialog_choice_t options[] = {
-                    ODROID_DIALOG_CHOICE_LAST
-                };
-                odroid_overlay_game_menu(options);
-                memset(framebuffer1, 0x0, sizeof(framebuffer1));
-                memset(framebuffer2, 0x0, sizeof(framebuffer2));
-            }
-            pause_pressed = joystick.values[ODROID_INPUT_VOLUME];
-        }
-
-        uint startTime = get_elapsed_time();
-        bool drawFrame = !skipFrames;
-
-        if(drawFrame) frames_since_last_skip += 1;
-        else frames_since_last_skip = 0;
+        bool drawFrame = common_emu_frame_loop();
 
         sms_update_keys( &joystick );
 
         system_frame(!drawFrame);
 
-        if (drawFrame) sms_draw_frame();
-
-        // See if we need to skip a frame to keep up
-        if (skipFrames == 0)
-        {
-            if (get_elapsed_time_since(startTime) > frameTime) skipFrames = 1;
-            switch(app->speedupEnabled){
-                case SPEEDUP_0_5x:
-                    pauseFrames++;
-                    break;
-                case SPEEDUP_0_75x:
-                    if(frames_since_last_skip % 4 == 0) pauseFrames++;
-                    break;
-                case SPEEDUP_1_25x:
-                    if(frames_since_last_skip % 4 == 0) skipFrames++;
-                    break;
-                case SPEEDUP_1_5x:
-                    if(frames_since_last_skip % 2 == 0) skipFrames++;
-                    break;
-                case SPEEDUP_2x:
-                    skipFrames++;
-                    break;
-                case SPEEDUP_3x:
-                    skipFrames+=2;
-                    break;
-            }
-        }
-        else if (skipFrames > 0)
-        {
-            skipFrames--;
-        }
-
-        // Tick before submitting audio/syncing
-        odroid_system_tick(!drawFrame, fullFrame, get_elapsed_time_since(startTime));
-
-        if (drawFrame)
-        {
+        if (drawFrame) {
+            sms_draw_frame();
             sms_pcm_submit();
-            for(uint8_t p = 0; p < pauseFrames + 1; p++) {
+        }
+
+        if(!common_emu_state.skip_frames)
+        {
+            for(uint8_t p = 0; p < common_emu_state.pause_frames + 1; p++) {
                 static dma_transfer_state_t last_dma_state = DMA_TRANSFER_STATE_HF;
                 while (dma_state == last_dma_state) {
-                    __NOP();
+                    cpumon_sleep();
                 }
                 last_dma_state = dma_state;
-            }
-            pauseFrames = 0;
-        }
-
-        // Render frames before faking a pause button press
-        if (pause_after_frames > 0) {
-            pause_after_frames--;
-            if (pause_after_frames == 0) {
-                pause_pressed = B_PAUSE;
             }
         }
     }
