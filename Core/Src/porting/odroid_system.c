@@ -33,7 +33,6 @@ void odroid_system_init(int appId, int sampleRate)
     odroid_settings_init();
     odroid_audio_init(sampleRate);
     odroid_display_init();
-
     counters.resetTime = get_elapsed_time();
 
     printf("%s: System ready!\n\n", __func__);
@@ -57,13 +56,17 @@ rg_app_desc_t *odroid_system_get_app()
 
 bool odroid_system_emu_load_state(int slot)
 {
-    (*currentApp.loadState)("");
+    if (currentApp.loadState != NULL) {
+        (*currentApp.loadState)("");
+    }
     return true;
 }
 
 bool odroid_system_emu_save_state(int slot)
 {
-    (*currentApp.saveState)("");
+    if (currentApp.saveState != NULL) {
+        (*currentApp.saveState)("");
+    }
     return true;
 }
 
@@ -140,6 +143,7 @@ void odroid_system_sleep(void)
 
     // odroid_settings_commit();
     gui_save_current_tab();
+    app_sleep_logo();
 
     GW_EnterDeepSleep();
 }

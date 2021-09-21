@@ -5,7 +5,7 @@
 
 #include "gw_linker.h"
 #include "rg_emulators.h"
-// #include "rg_favorites.h"
+#include "rg_i18n.h"
 #include "bitmaps.h"
 #include "gui.h"
 #include "rom_manager.h"
@@ -16,11 +16,18 @@
 #include "main_smsplusgx.h"
 #include "main_pce.h"
 #include "main_gw.h"
+#include "rg_rtc.h"
 
+#if !defined(COVERFLOW)
+#define COVERFLOW 0
+#endif /* COVERFLOW */
 // Increase when adding new emulators
 #define MAX_EMULATORS 8
 static retro_emulator_t emulators[MAX_EMULATORS];
 static int emulators_count = 0;
+
+const uint32_t intflash_magic_sign = 0xABAB;
+const uint32_t extflash_magic_sign __attribute__((section(".extflash_emu_data"))) = intflash_magic_sign;
 
 retro_emulator_t *file_to_emu(retro_emulator_file_t *file) {
     for (int i = 0; i < MAX_EMULATORS; i++)
@@ -34,14 +41,27 @@ static void event_handler(gui_event_t event, tab_t *tab)
     retro_emulator_t *emu = (retro_emulator_t *)tab->arg;
     listbox_item_t *item = gui_get_selected_item(tab);
     retro_emulator_file_t *file = (retro_emulator_file_t *)(item ? item->arg : NULL);
-
+/*
+    //want to show time but can't auto refresh ?    
+    if (GW_currentDate.WeekDay < 1)
+        GW_currentDate.WeekDay = 1;
+    fmt_Title_Date_Format(
+        tab->status, 
+        s_Title_Date_Format,
+        GW_currentDate.Date, 
+        GW_currentDate.Month, 
+        (char *) GW_RTC_Weekday[GW_currentDate.WeekDay-1],
+        GW_currentTime.Hours, 
+        GW_currentTime.Minutes,
+        GW_currentTime.Seconds);
+*/
     if (event == TAB_INIT)
     {
         emulator_init(emu);
 
         if (emu->roms.count > 0)
         {
-            sprintf(tab->status, " Jeux: %d", emu->roms.count);
+            sprintf(tab->status, "%s", emu->system_name);
             gui_resize_list(tab, emu->roms.count);
 
             for (int i = 0; i < emu->roms.count; i++)
@@ -58,10 +78,10 @@ static void event_handler(gui_event_t event, tab_t *tab)
             sprintf(tab->status, " No games");
             gui_resize_list(tab, 8);
             size_t len = 0;
-            tab->listbox.items[0].text = asnprintf(NULL, &len, "Place roms in folder: /roms/%s", emu->dirname);
+            //tab->listbox.items[0].text = asnprintf(NULL, &len, "Place roms in folder: /roms/%s", emu->dirname);
             len = 0;
-            tab->listbox.items[2].text = asnprintf(NULL, &len, "With file extension: .%s", emu->ext);
-            tab->listbox.items[4].text = "Use SELECT and START to navigate.";
+            //tab->listbox.items[2].text = asnprintf(NULL, &len, "With file extension: .%s", emu->ext);
+            //tab->listbox.items[4].text = "Use SELECT and START to navigate.";
             tab->listbox.cursor = 3;
             tab->is_empty = true;
         }
@@ -75,26 +95,24 @@ static void event_handler(gui_event_t event, tab_t *tab)
     {
         emulator_show_file_menu(file);
         gui_redraw();
-    }/*
+    }
     else if (event == KEY_PRESS_B)
     {
         emulator_show_file_info(file);
         gui_redraw();
-    }*/
+    }
     else if (event == TAB_IDLE)
     {
-        if (file->checksum == 0) {
-            emulator_crc32_file(file);
-        }
-
-        // if (gui.show_cover && gui.idle_counter == (gui.show_cover == 1 ? 8 : 1)) {
-        //     gui_draw_cover(file);
+        //if (file->checksum == 0) {
+        //    emulator_crc32_file(file);
         // }
     }
     else if (event == TAB_REDRAW)
     {
-        if (gui.show_cover)
-            gui_draw_cover(file);
+        gui_draw_status(tab);
+        //if (gui.show_cover)
+        //    gui_draw_cover(file);
+        
     }
 }
 
@@ -104,7 +122,7 @@ static void add_emulator(const char *system, const char *dirname, const char* ex
     assert(emulators_count <= MAX_EMULATORS);
     retro_emulator_t *p = &emulators[emulators_count++];
     strcpy(p->system_name, system);
-    strcpy(p->dirname, dirname);
+    //strcpy(p->dirname, dirname);
     strcpy(p->ext, ext);
     p->partition = 0;
     p->roms.count = 0;
@@ -132,6 +150,10 @@ void emulator_init(retro_emulator_t *emu)
         emu->system = system;
         emu->roms.files = system->roms;
         emu->roms.count = system->roms_count;
+#if COVERFLOW != 0        
+        emu->cover_height = system->cover_height;
+        emu->cover_width = system->cover_width;
+#endif
     } else {
         while(1) {
             lcd_backlight_on();
@@ -302,21 +324,25 @@ void emulator_show_file_info(retro_emulator_file_t *file)
     crc_value[0] = '\x00';
 
     odroid_dialog_choice_t choices[] = {
-        {0, "File", filename_value, 1, NULL},
-        {0, "Type", type_value, 1, NULL},
-        {0, "Size", size_value, 1, NULL},
-        {0, "ImgSize", img_size, 1, NULL},
-        {0, "---", "", -1, NULL},
-        {1, "Close", "", 1, NULL},
+        {0, s_File, filename_value, 1, NULL},
+        {0, s_Type, type_value, 1, NULL},
+        {0, s_Size, size_value, 1, NULL},
+		#if COVERFLOW != 0
+        {0, s_ImgSize, img_size, 1, NULL},
+		#endif
+        ODROID_DIALOG_CHOICE_SEPARATOR,
+        {1, s_Close, "", 1, NULL},
         ODROID_DIALOG_CHOICE_LAST
     };
 
     sprintf(choices[0].value, "%.127s", file->name);
     sprintf(choices[1].value, "%s", file->ext);
     sprintf(choices[2].value, "%d KB", file->size / 1024);
+    #if COVERFLOW != 0
     sprintf(choices[3].value, "%d KB", file->img_size / 1024);
+	#endif
 
-    odroid_overlay_dialog("Properties", choices, -1);
+    odroid_overlay_dialog(s_GameProp, choices, -1);
 }
 
 void emulator_show_file_menu(retro_emulator_file_t *file)
@@ -332,11 +358,12 @@ void emulator_show_file_menu(retro_emulator_file_t *file)
     bool is_fav = 0;
 
     odroid_dialog_choice_t choices[] = {
-        {0, "Reprendre          ", "", has_save, NULL},
-        {1, "Nouveau jeux       ", "", 1, NULL},
-        {0, "---", "", -1, NULL},
-        {3, is_fav ? "Retirer favoris    " : "Ajouter favoris    ", "", 1, NULL},
-        {2, "Supprimer savegarde", "", has_save || has_sram, NULL},
+        {0, s_Resume_game, "", has_save, NULL},
+        {1, s_New_game, "", 1, NULL},
+        ODROID_DIALOG_CHOICE_SEPARATOR,
+        //{3, is_fav ? s_Del_favorite : s_Add_favorite, "", 1, NULL},
+		//ODROID_DIALOG_CHOICE_SEPARATOR,
+        {2, s_Delete_save, "", has_save || has_sram, NULL},
         ODROID_DIALOG_CHOICE_LAST
     };
     int sel = odroid_overlay_dialog(file->name, choices, has_save ? 0 : 1);
@@ -346,17 +373,17 @@ void emulator_show_file_menu(retro_emulator_file_t *file)
         emulator_start(file, sel == 0, false);
     }
     else if (sel == 2) {
-        if (odroid_overlay_confirm("Supprimer sauvegarde?", false) == 1) {
+        if (odroid_overlay_confirm(s_Confiem_del_save, false) == 1) {
             store_erase(file->save_address, file->save_size);
         }
-    }/*
-    else if (sel == 3) {
-         if (is_fav)
-             favorite_remove(file);
-         else
-             favorite_add(file);
     }
-    */
+    else if (sel == 3) {
+        // if (is_fav)
+        //     favorite_remove(file);
+        // else
+        //     favorite_add(file);
+    }
+
     // free(save_path);
     // free(sram_path);
 }
@@ -426,39 +453,38 @@ void emulators_init()
 #endif
 
 
-#ifdef ENABLE_EMULATOR_NES
-    add_emulator("Nintendo Entertainment System", "nes", "nes", "nofrendo-go", 16, logo_nes, header_nes);
-#endif
-
-
 #ifdef ENABLE_EMULATOR_GB
     add_emulator("Nintendo Gameboy", "gb", "gb", "gnuboy-go", 0, logo_gb, header_gb);
     // add_emulator("Nintendo Gameboy Color", "gbc", "gbc", "gnuboy-go", 0, logo_gbc, header_gbc);
 #endif
 
+#ifdef ENABLE_EMULATOR_NES
+    add_emulator("Nintendo Entertainment System", "nes", "nes", "nofrendo-go", 16, logo_nes, header_nes);
+#endif
     
-#ifdef ENABLE_EMULATOR_SMS
-    add_emulator("Sega Master System", "sms", "sms", "smsplusgx-go", 0, logo_sms, header_sms);
-#endif
-
-#ifdef ENABLE_EMULATOR_GG
-    add_emulator("Sega Game Gear", "gg", "gg", "smsplusgx-go", 0, logo_gg, header_gg);
-#endif
-
-#ifdef ENABLE_EMULATOR_COL
-    add_emulator("Colecovision", "col", "col", "smsplusgx-go", 0, logo_col, header_col);
-#endif
-
-#ifdef ENABLE_EMULATOR_SG1000
-    add_emulator("Sega SG-1000", "sg", "sg", "smsplusgx-go", 0, logo_sg1000, header_sg1000);
+#ifdef ENABLE_EMULATOR_GW
+    add_emulator("Game & Watch", "gw", "gw", "LCD-Game-Emulator", 0, logo_gw, header_gw);
 #endif
 
 #ifdef ENABLE_EMULATOR_PCE
     add_emulator("PC Engine", "pce", "pce", "huexpress-go", 0, logo_nes, header_pce);
 #endif
 
-#ifdef ENABLE_EMULATOR_GW
-    add_emulator("Game & Watch", "gw", "gw", "LCD-Game-Emulator", 0, logo_gw, header_gw);
+#ifdef ENABLE_EMULATOR_GG
+    add_emulator("Sega Game Gear", "gg", "gg", "smsplusgx-go", 0, logo_gg, header_gg);
+#endif
+
+#ifdef ENABLE_EMULATOR_SMS
+    add_emulator("Sega Master System", "sms", "sms", "smsplusgx-go", 0, logo_sms, header_sms);
+#endif
+
+
+#ifdef ENABLE_EMULATOR_SG1000
+    add_emulator("Sega SG-1000", "sg", "sg", "smsplusgx-go", 0, logo_sg1000, header_sg1000);
+#endif
+
+#ifdef ENABLE_EMULATOR_COL
+    add_emulator("Colecovision", "col", "col", "smsplusgx-go", 0, logo_col, header_col);
 #endif
 
     // add_emulator("ColecoVision", "col", "col", "smsplusgx-go", 0, logo_col, header_col);

@@ -35,6 +35,17 @@ Holding the `PAUSE/SET` button while pressing other buttons have the following a
 - `PAUSE/SET` + `A` = Save state.
 - `PAUSE/SET` + `POWER` = Poweroff WITHOUT save-stating.
 
+## NewUI Branch
+
+<img src="assets/gwui.jpg" width="800"/>
+
+
+### Prerequisites
+
+ - Need same name as rom's bitmap file, bmp file must 128x96 pixels and 16bit(RGB565) and save file format flip row order 
+ - Bmp image file must RGB565 (Photoshop -> save as -> BMP file (sel:win+16bit, checked 'flip row order' option) -> Advance mode -> R5 G6 B5)
+
+
 ## How to report issues
 
 :exclamation: Please read this before reporting issues.
@@ -98,7 +109,7 @@ python3 -m pip install -r requirements.txt
 #       set the EXTFLASH_SIZE_MB to its size in megabytes (MB) (16MB used in the example):
 #           make -j8 EXTFLASH_SIZE_MB=16 flash
 #     * If you'd like to apply more advanced experimental ROM compression, add the
-#       field COMPRESS=zopfli to the make command.
+#       field COMPRESS=lzma to the make command.
 
 make -j8 flash
 ```
@@ -141,8 +152,8 @@ as upcoming features that need more testing. Give them a try!
 
 The current default compression method is `lz4`, which is incredibly fast to both
 compress and decompress. However, it's compression ratio pales in comparison
-compared to some other compression method. We recently added [zopfli](https://github.com/google/zopfli)
-as a compressor to generate data to be decompressed by miniz on-device. This
+compared to some other compression method. We recently added [zopfli](andhttps://github.com/google/zopfli) and lzma
+as selectable compressors to generate data to be decompressed on-device. This
 yields a higher compression ratio (see graph below), but at the cost of
 compression speed and (more importantly) decompression speed. Note that this
 benchmark was done on a desktop, not on-device. Decompression has to be fast
@@ -151,11 +162,11 @@ banks are dynamically decompressed on-demand.
 
 <img src="assets/decompression-benchmark-annotated.jpg" width="800"/>
 
-To use zopfli compression, make sure the python dependencies are installed
-and add `COMPRESS=zopfli` to the `make` command. For example:
+To use lzma compression, make sure the python dependencies are installed
+and add `COMPRESS=lzma` to the `make` command. For example:
 
 ```
-make -j8 EXTFLASH_SIZE_MB=16 COMPRESS=zopfli flash
+make -j8 EXTFLASH_SIZE_MB=16 COMPRESS=lzma flash
 ```
 
 ### Place external flash data at an offset
@@ -183,6 +194,8 @@ The Nintendo® Game & Watch™ comes with a 1MB external flash. This can be upgr
 The flash operates at 1.8V so make sure the one you change to also matches this.
 
 The recommended flash to upgrade to is MX25U12835FM2I-10G. It's 16MB, the commands are compatible with the stock firmware and it's also the largest flash that comes in the same package as the original.
+
+:exclamation: Make sure to backup and unlock your device before changing the external flash. The backup process requires the external flash to contain the original data.
 
 ## Advanced Flash Examples
 

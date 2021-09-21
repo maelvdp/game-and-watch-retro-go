@@ -4,10 +4,14 @@
 #include "odroid_system.h"
 #include "odroid_settings.h"
 #include "main.h"
+#include "rg_i18n.h"
 
 #define CONFIG_MAGIC 0xcafef00d
 #define ODROID_APPID_COUNT 4
 
+#if !defined  (COVERFLOW)
+  #define COVERFLOW 0
+#endif /* COVERFLOW */
 // Global
 static const char* Key_RomFilePath  = "RomFilePath";
 static const char* Key_AudioSink    = "AudioSink";
@@ -32,6 +36,7 @@ typedef struct persistent_config {
     uint8_t start_action;
     uint8_t volume;
     uint8_t font_size;
+    uint8_t theme;
     uint8_t startup_app;
     void *startup_file;
 
@@ -46,12 +51,13 @@ typedef struct persistent_config {
 
 static const persistent_config_t persistent_config_default = {
     .magic = CONFIG_MAGIC,
-    .version = 1,
+    .version = 2,
 
     .backlight = ODROID_BACKLIGHT_LEVEL6,
     .start_action = ODROID_START_ACTION_RESUME,
     .volume = ODROID_AUDIO_VOLUME_MAX / 2, // Too high volume can cause brown out if the battery isn't connected.
     .font_size = 8,
+    .theme = 0, //use as theme index
     .startup_app = 0,
     .main_menu_timeout_s = 60 * 10, // Turn off after 10 minutes of idle time in the main menu
     .main_menu_selected_tab = 0,
@@ -80,6 +86,12 @@ void odroid_settings_init()
 
     if (persistent_config_ram.magic != CONFIG_MAGIC) {
         printf("Config: Magic mismatch. Expected 0x%08lx, got 0x%08lx\n", CONFIG_MAGIC, persistent_config_ram.magic);
+        odroid_settings_reset();
+        return;
+    }
+
+    if (persistent_config_ram.version != persistent_config_default.version) {
+        printf("Config: New config version, resetting settings.\n");
         odroid_settings_reset();
         return;
     }
@@ -129,6 +141,25 @@ void odroid_settings_int32_set(const char *key, int32_t value)
 {
 }
 
+#if COVERFLOW != 0
+int32_t odroid_settings_theme_get()
+{
+    int theme = persistent_config_ram.theme;
+    if (theme < 0)
+        persistent_config_ram.theme = 0;
+    else if (theme > 4)
+        persistent_config_ram.theme = 4;
+    return persistent_config_ram.theme;
+}
+void odroid_settings_theme_set(int32_t theme)
+{
+    if (theme < 0)
+        theme = 0;
+    else if (theme > 4)
+        theme = 4;
+    persistent_config_ram.theme = theme;
+}
+#endif
 
 int32_t odroid_settings_app_int32_get(const char *key, int32_t default_value)
 {
@@ -181,6 +212,7 @@ void odroid_settings_AudioSink_set(int32_t value)
 {
   odroid_settings_int32_set(Key_AudioSink, value);
 }
+
 
 
 int32_t odroid_settings_Backlight_get()

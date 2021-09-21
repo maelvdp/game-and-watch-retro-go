@@ -14,10 +14,11 @@
 #include "gw_linker.h"
 #include "common.h"
 #include "rom_manager.h"
-
+#include "rg_i18n.h"
 #include "lz4_depack.h"
 #include <assert.h>
 #include  "miniz.h"
+#include "lzma.h"
 
 #define ODROID_APPID_NES 2
 
@@ -390,7 +391,7 @@ static bool palette_update_cb(odroid_dialog_choice_t *option, odroid_dialog_even
    char* pal_short = strchr( pal_name, ' ');
    if (pal_short) pal_name = pal_short + 1;
 
-   sprintf(option->value, "% -9s", pal_name);
+   sprintf(option->value, "%10s", pal_name);
    return event == ODROID_DIALOG_ENTER;
 }
 
@@ -402,9 +403,10 @@ void osd_getinput(void)
 
     odroid_gamepad_state_t joystick;
     odroid_input_read_gamepad(&joystick);
-
+    char palette_values[16];
+    snprintf(palette_values, sizeof(palette_values), "%s", s_Default);
     odroid_dialog_choice_t options[] = {
-            {100, "Palette", "Default", 1, &palette_update_cb},
+            {100, s_Palette, (char *)palette_values, 1, &palette_update_cb},
             // {101, "More...", "", 1, &advanced_settings_cb},
             ODROID_DIALOG_CHOICE_LAST
     };
@@ -439,6 +441,7 @@ size_t osd_getromdata(unsigned char **data)
     unsigned char *dest = (unsigned char *)&_NES_ROM_UNPACK_BUFFER;
     uint32_t available_size = (uint32_t)&_NES_ROM_UNPACK_BUFFER_SIZE;
 
+    wdog_refresh();
     if (memcmp(&src[0], LZ4_MAGIC, LZ4_MAGIC_SIZE) == 0)
     {
 
@@ -475,6 +478,12 @@ size_t osd_getromdata(unsigned char **data)
         flags |= TINFL_FLAG_USING_NON_WRAPPING_OUTPUT_BUF;
         n_decomp_bytes = tinfl_decompress_mem_to_mem(dest, available_size, src, ROM_DATA_LENGTH, flags);
         assert(n_decomp_bytes != TINFL_DECOMPRESS_MEM_TO_MEM_FAILED);
+        *data = dest;
+        return n_decomp_bytes;
+    }
+    else if(strcmp(ROM_EXT, "lzma") == 0){
+        size_t n_decomp_bytes;
+        n_decomp_bytes = lzma_inflate(dest, available_size, src, ROM_DATA_LENGTH);
         *data = dest;
         return n_decomp_bytes;
     }

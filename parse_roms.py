@@ -2,6 +2,7 @@
 import argparse
 import os
 import shutil
+import struct
 import subprocess
 from pathlib import Path
 from tempfile import TemporaryDirectory
@@ -13,7 +14,7 @@ except ImportError:
     tqdm = None
 
 ROM_ENTRIES_TEMPLATE = """
-const retro_emulator_file_t {name}[] = {{
+const retro_emulator_file_t {name}[] __attribute__((section(".extflash_emu_data")))  = {{
 {body}
 }};
 const uint32_t {name}_count = {rom_count};
@@ -24,8 +25,10 @@ ROM_ENTRY_TEMPLATE = """\t{{
 \t\t.ext = "{extension}",
 \t\t.address = {rom_entry},
 \t\t.size = {size},
+\t\t#if COVERFLOW != 0
 \t\t.img_address = {img_entry},
 \t\t.img_size = {img_size},
+\t\t#endif
 \t\t.save_address = {save_entry},
 \t\t.save_size = sizeof({save_entry}),
 \t\t.system = &{system},
@@ -33,14 +36,21 @@ ROM_ENTRY_TEMPLATE = """\t{{
 \t}},"""
 
 SYSTEM_PROTO_TEMPLATE = """
+#if !defined (COVERFLOW)
+  #define COVERFLOW 0
+#endif /* COVERFLOW */
 extern const rom_system_t {name};
 """
 
 SYSTEM_TEMPLATE = """
-const rom_system_t {name} = {{
+const rom_system_t {name} __attribute__((section(".extflash_emu_data"))) = {{
 \t.system_name = "{system_name}",
 \t.roms = {variable_name},
 \t.extension = "{extension}",
+\t#if COVERFLOW != 0
+\t.cover_width = {cover_width},
+\t.cover_height = {cover_height},
+\t#endif 
 \t.roms_count = {roms_count},
 }};
 """
@@ -52,7 +62,7 @@ SAVE_SIZES = {
     "col": 60 * 1024,
     "sg": 60 * 1024,
     "pce": 76 * 1024,
-    "gw":   4 * 1024
+    "gw": 4 * 1024,
 }
 
 
@@ -212,18 +222,74 @@ def compress_zopfli(data, level=None):
     return compressed_data
 
 
+@COMPRESSIONS
+def compress_lzma(data, level=None):
+    if level == DONT_COMPRESS:
+        if args.compress_gb_speed:
+            raise NotImplementedError
+        # This currently assumes this will only be applied to GB Bank 0
+        return data
+    import lzma
+
+    compressed_data = lzma.compress(
+        data,
+        format=lzma.FORMAT_ALONE,
+        filters=[
+            {
+                "id": lzma.FILTER_LZMA1,
+                "preset": 6,
+                "dict_size": 16 * 1024,
+            }
+        ],
+    )
+
+    compressed_data = compressed_data[13:]
+
+    return compressed_data
+
+
+def write_covart(srcfile, fn, w, h, jpg_quality):
+    from PIL import Image, ImageOps
+    img = Image.open(srcfile).convert(mode="RGB").resize((w, h), Image.ANTIALIAS)
+    img.save(fn,format="JPEG",optimize=True,quality=jpg_quality)
+
+# def write_rgb565(srcfile, fn, v):
+#     from PIL import Image, ImageOps
+#     #print(srcfile)
+#     img = Image.open(srcfile).convert(mode="RGB")
+#     img = img.resize((w, h), Image.ANTIALIAS)
+#     pixels = list(img.getdata())
+#     with open(fn, "wb") as f:
+#         #no file header
+#         for pix in pixels:
+#             r = (pix[0] >> 3) & 0x1F
+#             g = (pix[1] >> 2) & 0x3F
+#             b = (pix[2] >> 3) & 0x1F
+#             f.write(struct.pack("H", (r << 11) + (g << 5) + b))
+
+class NoArtworkError(Exception):
+    """No artwork found for this ROM"""
+
+
 class ROM:
-    def __init__(self, system_name: str, filepath: str, extension: str):
-        img_file = filepath
+    def __init__(self, system_name: str, filepath: str, extension: str, romdefs: dict):
         filepath = Path(filepath)
         self.path = filepath
+        self.filename = filepath
         # Remove compression extension from the name in case it ends with that
         if filepath.suffix in COMPRESSIONS:
-            self.name = filepath.with_suffix("").stem
-            img_file = os.path.splitext(img_file)[0]
+            self.filename = filepath.with_suffix("").stem
         else:
-            self.name = filepath.stem
-        self.size = filepath.stat().st_size
+            self.filename = filepath.stem
+        romdefs.setdefault(self.filename, {})
+        romdef = romdefs[self.filename]
+        romdef.setdefault('name', self.filename)
+        romdef.setdefault('publish', '1')
+        self.publish = (romdef['publish'] == '1')
+        self.name = romdef['name']
+        print("Found rom " + self.filename +" will display name as: " + romdef['name'])
+        if not (self.publish):
+            print("& will not Publish !")
         obj_name = "".join([i if i.isalnum() else "_" for i in self.path.name])
         self.obj_path = "build/roms/" + obj_name + ".o"
         symbol_path = str(self.path.parent) + "/" + obj_name
@@ -232,23 +298,17 @@ class ROM:
             + "".join([i if i.isalnum() else "_" for i in symbol_path])
             + "_start"
         )
-        img_file = os.path.splitext(img_file)[0] + '.bmp'
-        obj_name = "".join([i if i.isalnum() else "_" for i in os.path.basename(img_file)])
+
+        self.img_path = self.path.parent / (self.filename + ".img")
+        obj_name = "".join([i if i.isalnum() else "_" for i in self.img_path.name])
         symbol_path = str(self.path.parent) + "/" + obj_name
-        self.img_path = img_file
-        if os.path.exists(img_file):
-            self.img_size = os.path.getsize(img_file)
-            self.obj_img = "build/roms/" + obj_name + ".o"
-            self.img_symbol = (
-                "_binary_" 
-                + "".join([i if i.isalnum() else "_" for i in symbol_path]) 
-                + "_start"
-            )
-        else:
-            self.img_size = 0
-            self.obj_img = ""
-            self.img_symbol = "NULL"
-        
+        self.obj_img = "build/roms/" + obj_name + "_" + extension + ".o"
+        self.img_symbol = (
+            "_binary_"
+            + "".join([i if i.isalnum() else "_" for i in symbol_path])
+            + "_start"
+        )
+
     def __str__(self) -> str:
         return f"name: {self.name} size: {self.size} ext: {self.ext}"
 
@@ -262,8 +322,20 @@ class ROM:
     def ext(self):
         return self.path.suffix[1:].lower()
 
+    @property
+    def size(self):
+        return self.path.stat().st_size
+
+    @property
+    def img_size(self):
+        try:
+            return self.img_path.stat().st_size
+        except FileNotFoundError:
+            return 0
+
+
 class ROMParser:
-    def find_roms(self, system_name: str, folder: str, extension: str) -> [ROM]:
+    def find_roms(self, system_name: str, folder: str, extension: str, romdefs: dict) -> [ROM]:
         extension = extension.lower()
         ext = extension
         if not extension.startswith("."):
@@ -277,7 +349,7 @@ class ROMParser:
         rom_files = [r for r in rom_files if r.name.lower().endswith(extension)]
         rom_files.sort()
 
-        found_roms = [ROM(system_name, rom_file, ext) for rom_file in rom_files]
+        found_roms = [ROM(system_name, rom_file, ext, romdefs) for rom_file in rom_files]
 
         return found_roms
 
@@ -285,10 +357,13 @@ class ROMParser:
         self, name: str, roms: [ROM], save_prefix: str, system: str
     ) -> str:
         body = ""
+        pubcount = 0
         for i in range(len(roms)):
             rom = roms[i]
+            if not (rom.publish):
+                continue
             is_pal = any(
-                substring in rom.name
+                substring in rom.filename
                 for substring in [
                     "(E)",
                     "(Europe)",
@@ -302,19 +377,20 @@ class ROMParser:
             )
             region = "REGION_PAL" if is_pal else "REGION_NTSC"
             body += ROM_ENTRY_TEMPLATE.format(
-                name=rom.name,
+                name=str(rom.name),
                 size=rom.size,
                 rom_entry=rom.symbol,
                 img_size=rom.img_size,
-                img_entry=rom.img_symbol,
+                img_entry=rom.img_symbol if rom.img_size else "NULL",
                 save_entry=save_prefix + str(i),
                 region=region,
                 extension=rom.ext,
                 system=system,
             )
             body += "\n"
+            pubcount += 1
 
-        return ROM_ENTRIES_TEMPLATE.format(name=name, body=body, rom_count=len(roms))
+        return ROM_ENTRIES_TEMPLATE.format(name=name, body=body, rom_count=pubcount)
 
     def generate_object_file(self, rom: ROM) -> str:
         # convert rom to an .o file and place the data in the .extflash_game_rom section
@@ -349,7 +425,7 @@ class ROMParser:
         template = "extern const uint8_t {name}[];\n"
         return template.format(name=rom.symbol)
 
-    def generate_img_object_file(self, rom: ROM) -> str:
+    def generate_img_object_file(self, rom: ROM, w, h) -> str:
         # convert rom_img to an .o file and place the data in the .extflash_game_rom section
         prefix = ""
         if "GCC_PATH" in os.environ:
@@ -357,6 +433,20 @@ class ROMParser:
 
         prefix = Path(prefix)
 
+        imgs = []
+        imgs.append(str(rom.img_path.with_suffix(".png")))
+        imgs.append(str(rom.img_path.with_suffix(".jpg")))
+        imgs.append(str(rom.img_path.with_suffix(".bmp")))
+
+        for img in imgs:
+            if Path(img).exists():
+                write_covart(Path(img), rom.img_path, w, h, args.jpg_quality)
+                break
+
+        if not rom.img_path.exists():
+            raise NoArtworkError
+
+        print(f"INFO: Packing {rom.name} Cover> {rom.img_path} ...")
         subprocess.check_output(
             [
                 prefix / "arm-none-eabi-objcopy",
@@ -422,7 +512,8 @@ class ROMParser:
 
     def _compress_rom(self, variable_name, rom, compress_gb_speed=False, compress=None):
         """This will create a compressed rom file next to the original rom."""
-
+        if not (rom.publish):
+            return
         if compress is None:
             compress = "lz4"
 
@@ -433,7 +524,6 @@ class ROMParser:
             compress = "." + compress
         output_file = Path(str(rom.path) + compress)
         compress = COMPRESSIONS[compress]
-
         data = rom.read()
 
         if "nes_system" in variable_name:  # NES
@@ -511,12 +601,13 @@ class ROMParser:
         folder: str,
         extensions: List[str],
         save_prefix: str,
+        romdefs: dict,
         compress: str = None,
         compress_gb_speed: bool = False,
     ) -> int:
         roms_raw = []
         for e in extensions:
-            roms_raw += self.find_roms(system_name, folder, e)
+            roms_raw += self.find_roms(system_name, folder, e, romdefs)
 
         def find_compressed_roms():
             if not compress:
@@ -524,7 +615,7 @@ class ROMParser:
 
             roms = []
             for e in extensions:
-                roms += self.find_roms(system_name, folder, e + "." + compress)
+                roms += self.find_roms(system_name, folder, e + "." + compress, romdefs)
             return roms
 
         def contains_rom_by_name(rom, roms):
@@ -560,13 +651,33 @@ class ROMParser:
         total_save_size = 0
         total_rom_size = 0
         total_img_size = 0
+        pubcount = 0
+        for i, rom in enumerate(roms):
+            if not (rom.publish):
+                continue
+            else:
+               pubcount += 1
 
         save_size = SAVE_SIZES.get(folder, 0)
+        romdefs.setdefault("_cover_width", 128)
+        romdefs.setdefault("_cover_height", 96)
+        cover_width = romdefs["_cover_width"]
+        cover_height = romdefs["_cover_height"]
+        cover_width = 180 if cover_width > 180 else 64 if cover_width < 64 else cover_width
+        cover_height = 136 if cover_height > 136 else 64 if cover_height < 64 else cover_height
 
-        with open(file, "w") as f:
+        img_max = cover_width * cover_height
+
+        if img_max > 18600:
+            print(f"Error: {system_name} Cover art image [width:{cover_width} height: {cover_height}] will overflow!")
+            exit(-1)        
+
+        with open(file, "w", encoding = args.codepage) as f:
             f.write(SYSTEM_PROTO_TEMPLATE.format(name=variable_name))
 
             for i, rom in enumerate(roms):
+                if not (rom.publish):
+                    continue
                 if folder == "gb":
                     save_size = self.get_gameboy_save_size(rom.path)
 
@@ -576,11 +687,15 @@ class ROMParser:
                     (save_size + aligned_size - 1) // (aligned_size)
                 ) * aligned_size
                 total_rom_size += rom.size
-                total_img_size += rom.img_size
+                if (args.coverflow != 0) :
+                    total_img_size += rom.img_size
 
                 f.write(self.generate_object_file(rom))
-                if rom.img_size > 0 :
-                    f.write(self.generate_img_object_file(rom))
+                if (args.coverflow != 0) :
+                    try:
+                        f.write(self.generate_img_object_file(rom, cover_width, cover_height))
+                    except NoArtworkError:
+                        pass
                 f.write(self.generate_save_entry(save_prefix + str(i), save_size))
 
             rom_entries = self.generate_rom_entries(
@@ -594,7 +709,9 @@ class ROMParser:
                     system_name=system_name,
                     variable_name=folder + "_roms",
                     extension=folder,
-                    roms_count=len(roms),
+                    cover_width=cover_width,
+                    cover_height=cover_height,
+                    roms_count=pubcount,
                 )
             )
 
@@ -614,6 +731,29 @@ class ROMParser:
         total_img_size = 0
         build_config = ""
 
+        import json;
+        script_path = Path(__file__).parent
+        json_file = script_path / "roms" / "roms.json"
+        if Path(json_file).exists():
+            with open(json_file,'r') as load_f:
+                try:
+                    romdef = json.load(load_f)
+                    load_f.close()
+                except: 
+                    romdef = {}
+                    load_f.close()
+        else :
+            romdef = {}
+
+        romdef.setdefault('gb', {})
+        romdef.setdefault('nes', {})
+        romdef.setdefault('sms', {})
+        romdef.setdefault('gg', {})
+        romdef.setdefault('col', {})
+        romdef.setdefault('sg', {})
+        romdef.setdefault('pce', {})
+        romdef.setdefault('gw', {})
+
         save_size, rom_size, img_size = self.generate_system(
             "Core/Src/retro-go/gb_roms.c",
             "Nintendo Gameboy",
@@ -621,6 +761,7 @@ class ROMParser:
             "gb",
             ["gb", "gbc"],
             "SAVE_GB_",
+            romdef["gb"],
             args.compress,
             args.compress_gb_speed,
         )
@@ -636,6 +777,7 @@ class ROMParser:
             "nes",
             ["nes"],
             "SAVE_NES_",
+            romdef["nes"],
             args.compress,
         )
         total_save_size += save_size
@@ -650,6 +792,7 @@ class ROMParser:
             "sms",
             ["sms"],
             "SAVE_SMS_",
+            romdef["sms"],
         )
         total_save_size += save_size
         total_rom_size += rom_size
@@ -663,6 +806,7 @@ class ROMParser:
             "gg",
             ["gg"],
             "SAVE_GG_",
+            romdef["gg"]
         )
         total_save_size += save_size
         total_rom_size += rom_size
@@ -676,6 +820,7 @@ class ROMParser:
             "col",
             ["col"],
             "SAVE_COL_",
+            romdef["col"]
         )
         total_save_size += save_size
         total_rom_size += rom_size
@@ -689,6 +834,7 @@ class ROMParser:
             "sg",
             ["sg"],
             "SAVE_SG1000_",
+            romdef["sg"]
         )
         total_save_size += save_size
         total_rom_size += rom_size
@@ -702,6 +848,7 @@ class ROMParser:
             "pce",
             ["pce"],
             "SAVE_PCE_",
+            romdef["pce"],
             args.compress,
         )
 
@@ -710,19 +857,21 @@ class ROMParser:
         total_img_size += img_size
         build_config += "#define ENABLE_EMULATOR_PCE\n" if rom_size > 0 else ""
 
-        save_size, rom_size = self.generate_system(
+        save_size, rom_size, img_size = self.generate_system(
             "Core/Src/retro-go/gw_roms.c",
             "Game & Watch",
             "gw_system",
             "gw",
             ["gw"],
             "SAVE_GW_",
+            romdef["gw"]
         )
         total_save_size += save_size
         total_rom_size += rom_size
+        total_img_size += img_size
         build_config += "#define ENABLE_EMULATOR_GW\n" if rom_size > 0 else ""
 
-        total_size = total_save_size + total_rom_size
+        total_size = total_save_size + total_rom_size + total_img_size
 
         if total_size == 0:
             print(
@@ -731,7 +880,8 @@ class ROMParser:
             exit(-1)
 
         print(
-            f"Save data:\t{total_save_size} bytes\nROM data:\t{total_rom_size} bytes\nIMG data:\t{total_img_size} bytes\n"
+            f"Save data:\t{total_save_size} bytes\nROM data:\t{total_rom_size} bytes\n"
+            f"IMG data:\t{total_img_size} bytes\n"
             f"Total:\t\t{total_size} / {args.flash_size} bytes (plus some metadata)."
         )
         if total_size > args.flash_size:
@@ -754,6 +904,24 @@ if __name__ == "__main__":
         default=1024 * 1024,
         help="Size of external SPI flash in bytes.",
     )
+    parser.add_argument(
+        "--codepage",
+        type=str,
+        default="ansi",
+        help="save file's code page.",
+    )
+    parser.add_argument(
+        "--coverflow",
+        type=int,
+        default=0,
+        help="set coverflow image file pack",
+    )
+    parser.add_argument(
+        "--jpg_quality",
+        type=int,
+        default=90,
+        help="skip convert cover art image jpg quality",
+    )
     compression_choices = [t for t in COMPRESSIONS if not t[0] == "."]
     parser.add_argument(
         "--compress",
@@ -774,7 +942,7 @@ if __name__ == "__main__":
     )
     parser.set_defaults(compress_gb_speed=False)
     args = parser.parse_args()
-
+    
     if args.compress and "." + args.compress not in COMPRESSIONS:
         raise ValueError(f"Unknown compression method specified: {args.compress}")
 
@@ -788,4 +956,3 @@ if __name__ == "__main__":
         print("Missing dependencies. Run:")
         print("    python -m pip install -r requirements.txt")
         exit(-1)
-
