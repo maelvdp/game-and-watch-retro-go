@@ -31,18 +31,19 @@ Core/Src/porting/odroid_overlay.c \
 Core/Src/porting/odroid_sdcard.c \
 Core/Src/porting/odroid_system.c \
 Core/Src/porting/crc32.c \
+Core/Src/porting/lib/lz4_depack.c \
 Core/Src/stm32h7xx_hal_msp.c \
 Core/Src/stm32h7xx_it.c \
 Core/Src/system_stm32h7xx.c
 
 GNUBOY_C_SOURCES = \
 Core/Src/porting/gb/main_gb.c \
+Core/Src/porting/gb/loader.c \
 retro-go-stm32/gnuboy-go/components/gnuboy/cpu.c \
 retro-go-stm32/gnuboy-go/components/gnuboy/debug.c \
 retro-go-stm32/gnuboy-go/components/gnuboy/emu.c \
 retro-go-stm32/gnuboy-go/components/gnuboy/hw.c \
 retro-go-stm32/gnuboy-go/components/gnuboy/lcd.c \
-retro-go-stm32/gnuboy-go/components/gnuboy/loader.c \
 retro-go-stm32/gnuboy-go/components/gnuboy/mem.c \
 retro-go-stm32/gnuboy-go/components/gnuboy/rtc.c \
 retro-go-stm32/gnuboy-go/components/gnuboy/sound.c \

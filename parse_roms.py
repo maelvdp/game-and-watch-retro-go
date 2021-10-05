@@ -55,6 +55,7 @@ SAVE_SIZES = {
 
 # TODO: Find a better way to find this before building
 MAX_COMPRESSED_NES_SIZE = 0x00081000
+MAX_COMPRESSED_GB_SIZE = 0x00080000
 
 """
 All ``compress_*`` functions must be decorated ``@COMPRESSIONS`` and have the
@@ -461,24 +462,24 @@ class ROMParser:
                     return True
             return False
 
-        roms_compressed = find_compressed_roms()
+        if compress:
+            lz4_path = os.environ["LZ4_PATH"] if "LZ4_PATH" in os.environ else "lz4"
+            for r in roms_raw:
+                if folder == "nes" and os.stat(r.path).st_size > MAX_COMPRESSED_NES_SIZE:
+                    print(f"INFO: {r.name} is too large to compress, skipping compression!")
+                    continue
+                if folder == "gb" and os.stat(r.path).st_size > MAX_COMPRESSED_GB_SIZE:
+                    print(f"INFO: {r.name} is too large to compress, skipping compression!")
+                    continue
+                if not contains_rom_by_name(r, roms_lz4):
+                    subprocess.run([lz4_path, "-9", "--content-size", "--no-frame-crc", r.path, r.path + ".lz4"])
+            # Re-generate the lz4 rom list
+            roms_lz4 = []
+            for e in extensions:
+                roms_lz4 += self.find_roms(system_name, folder, e + ".lz4")
 
-        roms_raw = [r for r in roms_raw if not contains_rom_by_name(r, roms_compressed)]
-        if roms_raw:
-            pbar = tqdm(roms_raw) if tqdm else roms_raw
-            for r in pbar:
-                if tqdm:
-                    pbar.set_description(f"Compressing: {system_name} / {r.name}")
-                self._compress_rom(
-                    variable_name,
-                    r,
-                    compress_gb_speed=compress_gb_speed,
-                    compress=compress,
-                )
-            # Re-generate the compressed rom list
-            roms_compressed = find_compressed_roms()
 
-        # Create a list with all compressed roms and roms that
+        # Create a list with all LZ4-compressed roms and roms that
         # don't have a compressed counterpart.
         roms = roms_compressed[:]
         for r in roms_raw:
@@ -493,9 +494,18 @@ class ROMParser:
         with open(file, "w") as f:
             f.write(SYSTEM_PROTO_TEMPLATE.format(name=variable_name))
 
-            for i, rom in enumerate(roms):
-                if folder == "gb":
+        for i in range(len(roms)):
+            rom = roms[i]
+            if folder == "gb":
+                if rom.path.endswith(".lz4"):
+                    save_size = self.get_gameboy_save_size(rom.path[:-4])
+                else:
                     save_size = self.get_gameboy_save_size(rom.path)
+
+            # Aligned
+            aligned_size = 4 * 1024
+            total_save_size += ((save_size + aligned_size - 1) // (aligned_size)) * aligned_size
+            total_rom_size += rom.size
 
                 # Aligned
                 aligned_size = 4 * 1024
@@ -537,16 +547,7 @@ class ROMParser:
         total_rom_size = 0
         build_config = ""
 
-        save_size, rom_size = self.generate_system(
-            "Core/Src/retro-go/gb_roms.c",
-            "Nintendo Gameboy",
-            "gb_system",
-            "gb",
-            ["gb", "gbc"],
-            "SAVE_GB_",
-            args.compress,
-            args.compress_gb_speed,
-        )
+        save_size, rom_size = self.generate_system("Core/Src/retro-go/gb_roms.c", "Nintendo Gameboy", "gb_system", "gb", ["gb", "gbc"], "SAVE_GB_", args.compress)
         total_save_size += save_size
         total_rom_size += rom_size
         build_config += "#define ENABLE_EMULATOR_GB\n" if rom_size > 0 else ""
